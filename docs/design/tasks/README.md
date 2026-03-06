@@ -1,0 +1,21 @@
+---
+title: 任务设计说明索引
+status: active
+owner: architecture
+last_updated: 2026-03-06
+summary: 任务级设计说明文档的存放位置和索引规则。
+---
+
+# 任务设计说明索引
+
+每个正式任务都应在这里生成一份设计说明，记录背景、方案、风险和验证计划。
+
+推荐命名：
+
+- `YYYY-MM-DD-<scope>-design-task.md`
+
+可以通过 `bash ./scripts/create_delivery_bundle.sh "请做xxx"` 自动生成。
+
+- `2026-03-07`: `docs/design/tasks/20260307-000210-task-design-task.md` - 中文交付流程示例
+
+- `2026-03-07`: `docs/design/tasks/20260307-000321-task-design-task.md` - 二次生成回归验证

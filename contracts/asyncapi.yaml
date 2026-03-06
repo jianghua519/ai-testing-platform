@@ -1,0 +1,217 @@
+asyncapi: 2.6.0
+info:
+  title: AI Web Testing Platform Events (V2)
+  version: 1.0.0
+  description: >
+    Normative event contract for V2. Envelopes are versioned and must include
+    tenant boundaries and trace correlation.
+defaultContentType: application/json
+servers:
+  amqp:
+    url: amqp://rabbitmq:5672
+    protocol: amqp
+    description: AMQP broker (RabbitMQ in dev). Prod may use managed AMQP-compatible broker.
+channels:
+  runner.jobs.execute:
+    publish:
+      summary: Control Plane requests Runner to execute a job.
+      message:
+        $ref: "#/components/messages/JobExecuteRequested"
+  runner.jobs.cancel:
+    publish:
+      summary: Control Plane requests Runner to cancel an in-flight job/run.
+      message:
+        $ref: "#/components/messages/JobCancelRequested"
+  runner.results.reported:
+    subscribe:
+      summary: Runner reports job results back to Control Plane.
+      message:
+        $ref: "#/components/messages/JobResultReported"
+  run.events:
+    subscribe:
+      summary: Run lifecycle events emitted by Control Plane.
+      message:
+        oneOf:
+          - $ref: "#/components/messages/RunCreated"
+          - $ref: "#/components/messages/RunStatusChanged"
+  run_item.events:
+    subscribe:
+      summary: Run item lifecycle events emitted by Control Plane and/or Runner.
+      message:
+        $ref: "#/components/messages/RunItemStatusChanged"
+components:
+  schemas:
+    UUID:
+      type: string
+      format: uuid
+    ISO8601:
+      type: string
+      format: date-time
+    EventEnvelope:
+      type: object
+      required:
+        - event_id
+        - event_type
+        - schema_version
+        - occurred_at
+        - tenant_id
+        - project_id
+        - trace_id
+        - payload
+      properties:
+        event_id: { $ref: "#/components/schemas/UUID" }
+        event_type: { type: string }
+        schema_version: { type: string, example: "1.0" }
+        occurred_at: { $ref: "#/components/schemas/ISO8601" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        trace_id: { type: string, minLength: 1 }
+        correlation_id: { type: string }
+        payload: { type: object }
+    Run:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: { $ref: "#/components/schemas/UUID" }
+        status:
+          type: string
+          enum: [created, queued, running, succeeded, failed, canceling, canceled, archived]
+    RunItem:
+      type: object
+      required: [run_item_id, run_id, status, attempt_no]
+      properties:
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        status:
+          type: string
+          enum: [pending, dispatched, running, passed, failed, canceled]
+        attempt_no: { type: integer, minimum: 0 }
+    JobExecutePayload:
+      type: object
+      required: [job_id, run_id, run_item_id, attempt_no, plan, artifacts_policy]
+      properties:
+        job_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        attempt_no: { type: integer, minimum: 0 }
+        job_dedupe_key: { type: string, description: Deterministic dedupe key (sha256). }
+        plan:
+          type: object
+          description: Execution plan for the runner (DSL/steps).
+          additionalProperties: true
+        env:
+          type: object
+          description: Runtime env for execution (sanitized).
+          additionalProperties: true
+        artifacts_policy:
+          type: object
+          description: Capture policy for screenshots/videos/traces.
+          additionalProperties: true
+    JobResultPayload:
+      type: object
+      required: [job_id, run_id, run_item_id, attempt_no, status]
+      properties:
+        job_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        attempt_no: { type: integer, minimum: 0 }
+        status:
+          type: string
+          enum: [passed, failed, canceled]
+        started_at: { $ref: "#/components/schemas/ISO8601" }
+        finished_at: { $ref: "#/components/schemas/ISO8601" }
+        error:
+          type: object
+          additionalProperties: true
+        artifacts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        usage:
+          type: object
+          description: Metering usage (e.g. tokens, duration_ms).
+          additionalProperties: true
+  messages:
+    RunCreated:
+      name: RunCreated
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: run.created }
+              payload:
+                $ref: "#/components/schemas/Run"
+    RunStatusChanged:
+      name: RunStatusChanged
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: run.status_changed }
+              payload:
+                $ref: "#/components/schemas/Run"
+    RunItemStatusChanged:
+      name: RunItemStatusChanged
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: run_item.status_changed }
+              payload:
+                $ref: "#/components/schemas/RunItem"
+    JobExecuteRequested:
+      name: JobExecuteRequested
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: job.execute_requested }
+              payload:
+                $ref: "#/components/schemas/JobExecutePayload"
+      examples:
+        - name: minimal
+          payload:
+            event_id: 11111111-1111-1111-1111-111111111111
+            event_type: job.execute_requested
+            schema_version: "1.0"
+            occurred_at: "2026-03-03T18:00:00Z"
+            tenant_id: 22222222-2222-2222-2222-222222222222
+            project_id: 33333333-3333-3333-3333-333333333333
+            trace_id: trace-abc
+            payload:
+              job_id: 44444444-4444-4444-4444-444444444444
+              run_id: 55555555-5555-5555-5555-555555555555
+              run_item_id: 66666666-6666-6666-6666-666666666666
+              attempt_no: 0
+              job_dedupe_key: "sha256:..."
+              plan: {}
+              artifacts_policy: {}
+    JobCancelRequested:
+      name: JobCancelRequested
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: job.cancel_requested }
+              payload:
+                type: object
+                required: [run_id]
+                properties:
+                  run_id: { $ref: "#/components/schemas/UUID" }
+                  job_id: { $ref: "#/components/schemas/UUID" }
+    JobResultReported:
+      name: JobResultReported
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: job.result_reported }
+              payload:
+                $ref: "#/components/schemas/JobResultPayload"
