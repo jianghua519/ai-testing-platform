@@ -21,3 +21,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-000321-task-project-task.md` - 二次生成回归验证
 
 - `2026-03-07`: `docs/project/tasks/20260307-001530-ai-project-task.md` - AI自动化测试工具架构设计
+
+- `2026-03-07`: `docs/project/tasks/20260307-003354-ai-project-task.md` - AI自动化测试工具主要技术选型

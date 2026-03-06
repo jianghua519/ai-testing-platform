@@ -17,3 +17,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-000321-task-evidence.md` - 二次生成回归验证 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-001530-ai-evidence.md` - AI自动化测试工具架构设计 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-003354-ai-evidence.md` - AI自动化测试工具主要技术选型 的测试举证记录。

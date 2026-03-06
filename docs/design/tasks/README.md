@@ -21,3 +21,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-000321-task-design-task.md` - 二次生成回归验证
 
 - `2026-03-07`: `docs/design/tasks/20260307-001530-ai-design-task.md` - AI自动化测试工具架构设计
+
+- `2026-03-07`: `docs/design/tasks/20260307-003354-ai-design-task.md` - AI自动化测试工具主要技术选型
