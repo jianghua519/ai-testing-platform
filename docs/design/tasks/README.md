@@ -27,3 +27,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-004439-go-agent-web-step-dsl-design-task.md` - Go控制面Agent协议Web step DSL接口和数据模型设计
 
 - `2026-03-07`: `docs/design/tasks/20260307-005156-web-step-dsl-design-task.md` - Web step DSL字段约束状态机示例集合设计
+
+- `2026-03-07`: `docs/design/tasks/20260307-075804-web-step-dsl-playwright-design-task.md` - Web step DSL编译规则Playwright执行映射表设计
