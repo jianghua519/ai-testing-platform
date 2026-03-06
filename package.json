@@ -10,6 +10,7 @@
     "build": "npm run typecheck"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "@types/node": "^24.5.2"
   }
 }

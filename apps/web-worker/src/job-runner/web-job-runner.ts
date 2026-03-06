@@ -9,8 +9,12 @@ import { openExecutionSession } from '../session/session-manager.js';
 const buildMetadata = (job: WebWorkerJob): JobMetadata => ({
   jobId: job.jobId,
   runId: job.runId,
+  runItemId: job.runItemId,
+  attemptNo: job.attemptNo,
   tenantId: job.tenantId,
   projectId: job.projectId,
+  traceId: job.traceId,
+  correlationId: job.correlationId,
 });
 
 export class WebJobRunner {

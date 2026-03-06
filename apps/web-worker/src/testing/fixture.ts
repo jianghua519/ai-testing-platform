@@ -5,6 +5,10 @@ export const createWebWorkerJobFixture = (): WebWorkerJob => ({
   tenantId: 'tenant-1',
   projectId: 'project-1',
   runId: 'run-1',
+  runItemId: 'run-item-1',
+  attemptNo: 0,
+  traceId: 'trace-1',
+  correlationId: 'corr-1',
   envProfile: {
     profileId: 'dev',
     browserProfile: {

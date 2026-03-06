@@ -37,3 +37,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-083028-playwright-adapter-design-task.md` - playwright-adapter 代码骨架
 
 - `2026-03-07`: `docs/design/tasks/20260307-083757-web-worker-design-task.md` - web-worker 代码骨架
+
+- `2026-03-07`: `docs/design/tasks/20260307-084405-web-worker-http-publisher-design-task.md` - web-worker 结果回传协议与 HTTP publisher

@@ -5,6 +5,10 @@ export interface WebWorkerJob {
   tenantId: string;
   projectId: string;
   runId: string;
+  runItemId: string;
+  attemptNo: number;
+  traceId: string;
+  correlationId?: string;
   plan: WebStepPlanDraft;
   envProfile: EnvProfile;
   variableContext?: Record<string, unknown>;
@@ -13,8 +17,12 @@ export interface WebWorkerJob {
 export interface JobMetadata {
   jobId: string;
   runId: string;
+  runItemId: string;
+  attemptNo: number;
   tenantId: string;
   projectId: string;
+  traceId: string;
+  correlationId?: string;
 }
 
 export interface WebWorkerResult {

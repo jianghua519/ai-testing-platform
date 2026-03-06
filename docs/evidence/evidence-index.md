@@ -33,3 +33,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-083028-playwright-adapter-evidence.md` - playwright-adapter 代码骨架 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-083757-web-worker-evidence.md` - web-worker 代码骨架 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-084405-web-worker-http-publisher-evidence.md` - web-worker 结果回传协议与 HTTP publisher 的测试举证记录。
