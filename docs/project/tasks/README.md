@@ -35,3 +35,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-082310-web-dsl-schema-dsl-compiler-project-task.md` - web-dsl-schema 与 dsl-compiler 代码骨架
 
 - `2026-03-07`: `docs/project/tasks/20260307-083028-playwright-adapter-project-task.md` - playwright-adapter 代码骨架
+
+- `2026-03-07`: `docs/project/tasks/20260307-083757-web-worker-project-task.md` - web-worker 代码骨架

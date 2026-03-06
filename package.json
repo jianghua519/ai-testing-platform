@@ -2,10 +2,11 @@
   "name": "ai-web-testing-platform-v2",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
-    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter",
+    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter apps/web-worker",
     "build": "npm run typecheck"
   },
   "devDependencies": {
