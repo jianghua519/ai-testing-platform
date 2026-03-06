@@ -19,3 +19,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-001530-ai-evidence.md` - AI自动化测试工具架构设计 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-003354-ai-evidence.md` - AI自动化测试工具主要技术选型 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-004439-go-agent-web-step-dsl-evidence.md` - Go控制面Agent协议Web step DSL接口和数据模型设计 的测试举证记录。
