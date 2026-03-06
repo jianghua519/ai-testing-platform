@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler",
+    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter",
     "build": "npm run typecheck"
   },
   "devDependencies": {

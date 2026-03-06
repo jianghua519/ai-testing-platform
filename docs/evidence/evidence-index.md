@@ -29,3 +29,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-080827-dsl-playwright-evidence.md` - DSL 编译器模块设计与 Playwright 适配层包结构 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-082310-web-dsl-schema-dsl-compiler-evidence.md` - web-dsl-schema 与 dsl-compiler 代码骨架 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-083028-playwright-adapter-evidence.md` - playwright-adapter 代码骨架 的测试举证记录。

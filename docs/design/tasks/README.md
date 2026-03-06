@@ -33,3 +33,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-080827-dsl-playwright-design-task.md` - DSL 编译器模块设计与 Playwright 适配层包结构
 
 - `2026-03-07`: `docs/design/tasks/20260307-082310-web-dsl-schema-dsl-compiler-design-task.md` - web-dsl-schema 与 dsl-compiler 代码骨架
+
+- `2026-03-07`: `docs/design/tasks/20260307-083028-playwright-adapter-design-task.md` - playwright-adapter 代码骨架
