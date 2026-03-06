@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@aiwtp/web-dsl-schema": [
+        "packages/web-dsl-schema/src/index.ts"
+      ],
+      "@aiwtp/web-dsl-schema/*": [
+        "packages/web-dsl-schema/src/*"
+      ]
+    }
+  }
+}

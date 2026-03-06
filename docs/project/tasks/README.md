@@ -31,3 +31,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-075804-web-step-dsl-playwright-project-task.md` - Web step DSL编译规则Playwright执行映射表设计
 
 - `2026-03-07`: `docs/project/tasks/20260307-080827-dsl-playwright-project-task.md` - DSL 编译器模块设计与 Playwright 适配层包结构
+
+- `2026-03-07`: `docs/project/tasks/20260307-082310-web-dsl-schema-dsl-compiler-project-task.md` - web-dsl-schema 与 dsl-compiler 代码骨架

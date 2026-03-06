@@ -16,8 +16,11 @@
 常用命令：
 
 - `make validate`
+- `make typecheck`
 - `bash ./scripts/validate_contracts.sh`
 - `bash ./scripts/validate_docs.sh`
+- `npm install`
+- `npm run typecheck`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`

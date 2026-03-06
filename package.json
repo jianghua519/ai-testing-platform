@@ -1,0 +1,14 @@
+{
+  "name": "ai-web-testing-platform-v2",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler",
+    "build": "npm run typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
