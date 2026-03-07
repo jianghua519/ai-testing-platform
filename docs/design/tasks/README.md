@@ -55,3 +55,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-100206-control-plane-postgresql-design-task.md` - control-plane PostgreSQL持久化骨架
 
 - `2026-03-07`: `docs/design/tasks/20260307-101158-control-plane-design-task.md` - control-plane领域模型表扩展
+
+- `2026-03-07`: `docs/design/tasks/20260307-102523-postgresql-design-task.md` - 外部 PostgreSQL 实例验证

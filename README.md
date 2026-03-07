@@ -31,7 +31,8 @@
 - `npm run typecheck`
 - `npm run playwright:install`
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
-- `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路 smoke
+- `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
+- `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程）
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`

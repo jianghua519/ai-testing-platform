@@ -10,13 +10,15 @@
     "build": "npm run typecheck",
     "playwright:install": "playwright install chromium",
     "smoke:web:real": "npm run build && node ./scripts/run_real_browser_smoke.mjs",
-    "smoke:control-plane:postgres": "npm run build && node ./scripts/run_control_plane_postgres_smoke.mjs"
+    "smoke:control-plane:postgres": "npm run build && node ./scripts/run_control_plane_postgres_smoke.mjs",
+    "smoke:control-plane:postgres:real": "npm run build && node ./scripts/run_control_plane_postgres_real_smoke.mjs"
   },
   "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/pg": "^8.15.5",
+    "embedded-postgres": "^18.3.0-beta.16",
     "pg-mem": "^3.0.5",
     "playwright": "1.58.2",
-    "typescript": "^5.9.2",
-    "@types/node": "^24.5.2",
-    "@types/pg": "^8.15.5"
+    "typescript": "^5.9.2"
   }
 }
