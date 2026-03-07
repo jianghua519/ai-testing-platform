@@ -3,9 +3,11 @@ import { once } from 'node:events';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type {
+  ControlPlanePage,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneServer,
+  ControlPlaneStepEventRecord,
   ControlPlaneStore,
   JobEventsResponse,
   RunnerResultEnvelope,
@@ -13,6 +15,7 @@ import type {
 } from '../types.js';
 import type { StepControlRequest, StepControlResponse } from '@aiwtp/web-worker';
 import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js';
+import { PaginationError, parseLimit } from './pagination.js';
 
 const json = (response: ServerResponse, status: number, payload?: unknown): void => {
   if (payload === undefined) {
@@ -112,6 +115,40 @@ const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
   artifacts: [],
 });
 
+const toApiStepEvent = (stepEvent: ControlPlaneStepEventRecord) => ({
+  event_id: stepEvent.eventId,
+  run_id: stepEvent.runId,
+  run_item_id: stepEvent.runItemId,
+  job_id: stepEvent.jobId,
+  tenant_id: stepEvent.tenantId,
+  project_id: stepEvent.projectId,
+  attempt_no: stepEvent.attemptNo,
+  compiled_step_id: stepEvent.compiledStepId,
+  source_step_id: stepEvent.sourceStepId,
+  status: stepEvent.status,
+  started_at: stepEvent.startedAt,
+  finished_at: stepEvent.finishedAt,
+  duration_ms: stepEvent.durationMs,
+  error_code: stepEvent.errorCode,
+  error_message: stepEvent.errorMessage,
+  artifacts: stepEvent.artifacts,
+  extracted_variables: stepEvent.extractedVariables,
+  received_at: stepEvent.receivedAt,
+});
+
+const toPaginatedPayload = <T>(page: ControlPlanePage<T>, mapper: (item: T) => unknown) => ({
+  items: page.items.map(mapper),
+  next_cursor: page.nextCursor,
+});
+
+const requiredQuery = (url: URL, name: string): string => {
+  const value = url.searchParams.get(name);
+  if (!value) {
+    throw new PaginationError(`${name} is required`);
+  }
+  return value;
+};
+
 export interface StartControlPlaneServerOptions {
   port?: number;
   hostname?: string;
@@ -138,7 +175,34 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
       }
 
       if (method === 'GET' && pathname === '/api/v1/internal/migrations') {
-        json(response, 200, { items: await store.listAppliedMigrations() });
+        json(response, 200, {
+          items: (await store.listAppliedMigrations()).map((migration) => ({
+            version: migration.version,
+            checksum: migration.checksum,
+            applied_at: migration.appliedAt,
+          })),
+        });
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/v1/runs') {
+        const page = await store.listRuns({
+          tenantId: requiredQuery(url, 'tenant_id'),
+          projectId: requiredQuery(url, 'project_id'),
+          limit: parseLimit(url.searchParams.get('limit'), 50, 200),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiRun));
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/v1/run-items') {
+        const page = await store.listRunItems({
+          runId: requiredQuery(url, 'run_id'),
+          limit: parseLimit(url.searchParams.get('limit'), 200, 500),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiRunItem));
         return;
       }
 
@@ -197,6 +261,17 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         return;
       }
 
+      const runStepEventsMatch = matchPath(pathname, /^\/api\/v1\/internal\/runs\/([^/]+)\/step-events$/);
+      if (method === 'GET' && runStepEventsMatch) {
+        const [, runId] = runStepEventsMatch;
+        const page = await store.listStepEventsByRun(runId, {
+          limit: parseLimit(url.searchParams.get('limit'), 200, 500),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiStepEvent));
+        return;
+      }
+
       const runMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+)$/);
       if (method === 'GET' && runMatch) {
         const [, runId] = runMatch;
@@ -224,12 +299,27 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
       const stepEventsMatch = matchPath(pathname, /^\/api\/v1\/internal\/run-items\/([^/]+)\/step-events$/);
       if (method === 'GET' && stepEventsMatch) {
         const [, runItemId] = stepEventsMatch;
-        json(response, 200, { items: await store.listStepEvents(runItemId) });
+        const page = await store.listStepEventsByRunItem(runItemId, {
+          limit: parseLimit(url.searchParams.get('limit'), 200, 500),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiStepEvent));
         return;
       }
 
       json(response, 404, { error: { code: 'NOT_FOUND', message: 'route not found', trace_id: 'local' } });
     } catch (error) {
+      if (error instanceof PaginationError) {
+        json(response, 400, {
+          error: {
+            code: 'INVALID_PAGINATION',
+            message: error.message,
+            trace_id: 'local',
+          },
+        });
+        return;
+      }
+
       json(response, 500, {
         error: {
           code: 'INTERNAL_ERROR',

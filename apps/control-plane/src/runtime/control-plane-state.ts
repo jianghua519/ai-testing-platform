@@ -1,5 +1,9 @@
 import type {
+  ControlPlaneListRunItemsQuery,
+  ControlPlaneListRunsQuery,
+  ControlPlaneListStepEventsQuery,
   ControlPlaneMigrationRecord,
+  ControlPlanePage,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneStateSnapshot,
@@ -10,6 +14,7 @@ import type {
 } from '../types.js';
 import type { StepControlResponse } from '@aiwtp/web-worker';
 import { buildControlPlaneProjections } from './projection-utils.js';
+import { paginateDescending } from './pagination.js';
 
 const toNestedRecord = <T>(source: Map<string, Map<string, T[]>>): Record<string, Record<string, T[]>> => {
   const target: Record<string, Record<string, T[]>> = {};
@@ -33,6 +38,21 @@ const toNestedMap = <T>(source: Record<string, Record<string, T[]>>): Map<string
   }
   return target;
 };
+
+const sortRunsDesc = (left: ControlPlaneRunRecord, right: ControlPlaneRunRecord): number => {
+  const leftCreatedAt = left.createdAt ?? '';
+  const rightCreatedAt = right.createdAt ?? '';
+  return rightCreatedAt.localeCompare(leftCreatedAt) || right.runId.localeCompare(left.runId);
+};
+
+const sortRunItemsDesc = (left: ControlPlaneRunItemRecord, right: ControlPlaneRunItemRecord): number => {
+  const leftCreatedAt = left.createdAt ?? '';
+  const rightCreatedAt = right.createdAt ?? '';
+  return rightCreatedAt.localeCompare(leftCreatedAt) || right.runItemId.localeCompare(left.runItemId);
+};
+
+const sortStepEventsDesc = (left: ControlPlaneStepEventRecord, right: ControlPlaneStepEventRecord): number =>
+  right.receivedAt.localeCompare(left.receivedAt) || right.eventId.localeCompare(left.eventId);
 
 export class InMemoryControlPlaneState implements ControlPlaneStore {
   private readonly eventsByJob: Map<string, RecordedRunnerEvent[]>;
@@ -105,12 +125,49 @@ export class InMemoryControlPlaneState implements ControlPlaneStore {
     return this.buildProjections().runsById.get(runId);
   }
 
+  async listRuns(query: ControlPlaneListRunsQuery): Promise<ControlPlanePage<ControlPlaneRunRecord>> {
+    const runs = Array.from(this.buildProjections().runsById.values())
+      .filter((run) => run.tenantId === query.tenantId && run.projectId === query.projectId)
+      .sort(sortRunsDesc);
+
+    return paginateDescending(runs, query.limit, (run) => ({
+      primary: run.createdAt ?? '',
+      secondary: run.runId,
+    }), query.cursor);
+  }
+
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
     return this.buildProjections().runItemsById.get(runItemId);
   }
 
-  async listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]> {
-    return [...(this.buildProjections().stepEventsByRunItemId.get(runItemId) ?? [])];
+  async listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>> {
+    const runItems = [...(this.buildProjections().runItemsByRunId.get(query.runId) ?? [])]
+      .sort(sortRunItemsDesc);
+
+    return paginateDescending(runItems, query.limit, (runItem) => ({
+      primary: runItem.createdAt ?? '',
+      secondary: runItem.runItemId,
+    }), query.cursor);
+  }
+
+  async listStepEventsByRun(runId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    const stepEvents = [...(this.buildProjections().stepEventsByRunId.get(runId) ?? [])]
+      .sort(sortStepEventsDesc);
+
+    return paginateDescending(stepEvents, query.limit, (stepEvent) => ({
+      primary: stepEvent.receivedAt,
+      secondary: stepEvent.eventId,
+    }), query.cursor);
+  }
+
+  async listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    const stepEvents = [...(this.buildProjections().stepEventsByRunItemId.get(runItemId) ?? [])]
+      .sort(sortStepEventsDesc);
+
+    return paginateDescending(stepEvents, query.limit, (stepEvent) => ({
+      primary: stepEvent.receivedAt,
+      secondary: stepEvent.eventId,
+    }), query.cursor);
   }
 
   async snapshot(): Promise<ControlPlaneStateSnapshot> {

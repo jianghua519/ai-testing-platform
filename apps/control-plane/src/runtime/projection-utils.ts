@@ -102,12 +102,15 @@ const upsertRunItemProjection = (record: ControlPlaneRunItemRecord | undefined, 
 export interface BuiltControlPlaneProjections {
   runsById: Map<string, ControlPlaneRunRecord>;
   runItemsById: Map<string, ControlPlaneRunItemRecord>;
+  runItemsByRunId: Map<string, ControlPlaneRunItemRecord[]>;
+  stepEventsByRunId: Map<string, ControlPlaneStepEventRecord[]>;
   stepEventsByRunItemId: Map<string, ControlPlaneStepEventRecord[]>;
 }
 
 export const buildControlPlaneProjections = (events: RecordedRunnerEvent[]): BuiltControlPlaneProjections => {
   const runsById = new Map<string, ControlPlaneRunRecord>();
   const runItemsById = new Map<string, ControlPlaneRunItemRecord>();
+  const stepEventsByRunId = new Map<string, ControlPlaneStepEventRecord[]>();
   const stepEventsByRunItemId = new Map<string, ControlPlaneStepEventRecord[]>();
 
   for (const event of events) {
@@ -118,8 +121,7 @@ export const buildControlPlaneProjections = (events: RecordedRunnerEvent[]): Bui
       continue;
     }
 
-    const stepEvents = stepEventsByRunItemId.get(event.envelope.payload.run_item_id) ?? [];
-    stepEvents.push({
+    const stepEvent: ControlPlaneStepEventRecord = {
       eventId: event.envelope.event_id,
       runId: event.envelope.payload.run_id,
       runItemId: event.envelope.payload.run_item_id,
@@ -138,13 +140,29 @@ export const buildControlPlaneProjections = (events: RecordedRunnerEvent[]): Bui
       artifacts: event.envelope.payload.artifacts ?? [],
       extractedVariables: event.envelope.payload.extracted_variables ?? [],
       receivedAt: event.receivedAt,
-    });
-    stepEventsByRunItemId.set(event.envelope.payload.run_item_id, stepEvents);
+    };
+
+    const byRunItem = stepEventsByRunItemId.get(stepEvent.runItemId) ?? [];
+    byRunItem.push(stepEvent);
+    stepEventsByRunItemId.set(stepEvent.runItemId, byRunItem);
+
+    const byRun = stepEventsByRunId.get(stepEvent.runId) ?? [];
+    byRun.push(stepEvent);
+    stepEventsByRunId.set(stepEvent.runId, byRun);
+  }
+
+  const runItemsByRunId = new Map<string, ControlPlaneRunItemRecord[]>();
+  for (const runItem of runItemsById.values()) {
+    const runItems = runItemsByRunId.get(runItem.runId) ?? [];
+    runItems.push(runItem);
+    runItemsByRunId.set(runItem.runId, runItems);
   }
 
   return {
     runsById,
     runItemsById,
+    runItemsByRunId,
+    stepEventsByRunId,
     stepEventsByRunItemId,
   };
 };

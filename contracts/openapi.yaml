@@ -314,6 +314,40 @@ paths:
           name: run_item_id
           required: true
           schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalStepEventListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/runs/{run_id}/step-events:
+    get:
+      tags: [Internal]
+      summary: List projected step execution events for a run
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - in: query
+          name: cursor
+          schema: { type: string }
       responses:
         "200":
           description: OK
@@ -756,6 +790,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InternalStepEvent"
+        next_cursor:
+          type: string
     InternalMigration:
       type: object
       required: [version, checksum, applied_at]

@@ -2,7 +2,11 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { InMemoryControlPlaneState } from './control-plane-state.js';
 import type {
+  ControlPlaneListRunItemsQuery,
+  ControlPlaneListRunsQuery,
+  ControlPlaneListStepEventsQuery,
   ControlPlaneMigrationRecord,
+  ControlPlanePage,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneStateSnapshot,
@@ -76,12 +80,24 @@ export class FileBackedControlPlaneStore implements ControlPlaneStore {
     return this.memoryStore.getRun(runId);
   }
 
+  async listRuns(query: ControlPlaneListRunsQuery): Promise<ControlPlanePage<ControlPlaneRunRecord>> {
+    return this.memoryStore.listRuns(query);
+  }
+
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
     return this.memoryStore.getRunItem(runItemId);
   }
 
-  async listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]> {
-    return this.memoryStore.listStepEvents(runItemId);
+  async listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>> {
+    return this.memoryStore.listRunItems(query);
+  }
+
+  async listStepEventsByRun(runId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    return this.memoryStore.listStepEventsByRun(runId, query);
+  }
+
+  async listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    return this.memoryStore.listStepEventsByRunItem(runItemId, query);
   }
 
   async snapshot(): Promise<ControlPlaneStateSnapshot> {

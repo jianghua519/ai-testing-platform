@@ -35,6 +35,11 @@ export interface RecordRunnerEventResult {
   duplicate: boolean;
 }
 
+export interface ControlPlanePage<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
 export interface ControlPlaneMigrationRecord {
   version: string;
   checksum: string;
@@ -89,6 +94,24 @@ export interface ControlPlaneStepEventRecord {
   receivedAt: string;
 }
 
+export interface ControlPlaneListRunsQuery {
+  tenantId: string;
+  projectId: string;
+  limit: number;
+  cursor?: string;
+}
+
+export interface ControlPlaneListRunItemsQuery {
+  runId: string;
+  limit: number;
+  cursor?: string;
+}
+
+export interface ControlPlaneListStepEventsQuery {
+  limit: number;
+  cursor?: string;
+}
+
 export interface ControlPlaneStore {
   recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult>;
   listJobEvents(jobId: string): Promise<RecordedRunnerEvent[]>;
@@ -96,8 +119,11 @@ export interface ControlPlaneStore {
   dequeueStepDecision(jobId: string, sourceStepId: string): Promise<StepControlResponse | undefined>;
   listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]>;
   getRun(runId: string): Promise<ControlPlaneRunRecord | undefined>;
+  listRuns(query: ControlPlaneListRunsQuery): Promise<ControlPlanePage<ControlPlaneRunRecord>>;
   getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined>;
-  listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]>;
+  listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>>;
+  listStepEventsByRun(runId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>>;
+  listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>>;
   snapshot(): Promise<ControlPlaneStateSnapshot>;
   close?(): Promise<void>;
 }

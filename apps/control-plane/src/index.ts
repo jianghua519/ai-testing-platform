@@ -1,6 +1,7 @@
 export * from './types.js';
 export * from './runtime/control-plane-state.js';
 export * from './runtime/file-backed-control-plane-store.js';
+export * from './runtime/pagination.js';
 export * from './runtime/projection-utils.js';
 export * from './runtime/postgres-migrations.js';
 export * from './runtime/postgres-control-plane-store.js';

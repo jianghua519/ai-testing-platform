@@ -1,6 +1,10 @@
 import { Pool } from 'pg';
 import type {
+  ControlPlaneListRunItemsQuery,
+  ControlPlaneListRunsQuery,
+  ControlPlaneListStepEventsQuery,
   ControlPlaneMigrationRecord,
+  ControlPlanePage,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneStateSnapshot,
@@ -20,6 +24,7 @@ import {
   listControlPlanePostgresMigrations,
   runControlPlanePostgresMigrations,
 } from './postgres-migrations.js';
+import { decodeCursor, encodeCursor } from './pagination.js';
 
 interface SqlQueryResult<Row> {
   rows: Row[];
@@ -270,6 +275,18 @@ const mapStepEventProjection = (row: StepEventProjectionRow): ControlPlaneStepEv
   receivedAt: row.received_at,
 });
 
+const toPage = <T>(items: T[], limit: number, getCursor: (item: T) => { primary: string; secondary: string }): ControlPlanePage<T> => {
+  const visibleItems = items.slice(0, limit);
+  const nextCursor = items.length > limit && visibleItems.length > 0
+    ? encodeCursor(getCursor(visibleItems[visibleItems.length - 1]))
+    : undefined;
+
+  return {
+    items: visibleItems,
+    nextCursor,
+  };
+};
+
 export class PostgresControlPlaneStore implements ControlPlaneStore {
   private constructor(
     private readonly pool: SqlPoolLike,
@@ -467,6 +484,32 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     return result.rows[0] ? mapRunProjection(result.rows[0]) : undefined;
   }
 
+  async listRuns(query: ControlPlaneListRunsQuery): Promise<ControlPlanePage<ControlPlaneRunRecord>> {
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [query.tenantId, query.projectId];
+    let sql = `select run_id, tenant_id, project_id, status, started_at, finished_at, last_event_id, created_at, updated_at
+       from runs
+       where tenant_id = $1
+         and project_id = $2`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (created_at, run_id) < ($3::timestamptz, $4)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by created_at desc, run_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<RunProjectionRow>(sql, values);
+    return toPage(result.rows.map(mapRunProjection), query.limit, (run) => ({
+      primary: run.createdAt ?? '',
+      secondary: run.runId,
+    }));
+  }
+
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
     const result = await this.pool.query<RunItemProjectionRow>(
       `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, started_at, finished_at, last_event_id, created_at, updated_at
@@ -478,16 +521,81 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     return result.rows[0] ? mapRunItemProjection(result.rows[0]) : undefined;
   }
 
-  async listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]> {
-    const result = await this.pool.query<StepEventProjectionRow>(
-      `select event_id, run_id, run_item_id, job_id, tenant_id, project_id, attempt_no, compiled_step_id, source_step_id, status,
-              started_at, finished_at, duration_ms, error_code, error_message, artifacts_json, extracted_variables_json, received_at
+  async listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>> {
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [query.runId];
+    let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, started_at, finished_at, last_event_id, created_at, updated_at
+       from run_items
+       where run_id = $1`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (created_at, run_item_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by created_at desc, run_item_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<RunItemProjectionRow>(sql, values);
+    return toPage(result.rows.map(mapRunItemProjection), query.limit, (runItem) => ({
+      primary: runItem.createdAt ?? '',
+      secondary: runItem.runItemId,
+    }));
+  }
+
+  async listStepEventsByRun(runId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [runId];
+    let sql = `select event_id, run_id, run_item_id, job_id, tenant_id, project_id, attempt_no, compiled_step_id, source_step_id, status,
+                      started_at, finished_at, duration_ms, error_code, error_message, artifacts_json, extracted_variables_json, received_at
        from step_events
-       where run_item_id = $1
-       order by received_at asc, event_id asc`,
-      [runItemId],
-    );
-    return result.rows.map(mapStepEventProjection);
+       where run_id = $1`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (received_at, event_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by received_at desc, event_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<StepEventProjectionRow>(sql, values);
+    return toPage(result.rows.map(mapStepEventProjection), query.limit, (stepEvent) => ({
+      primary: stepEvent.receivedAt,
+      secondary: stepEvent.eventId,
+    }));
+  }
+
+  async listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [runItemId];
+    let sql = `select event_id, run_id, run_item_id, job_id, tenant_id, project_id, attempt_no, compiled_step_id, source_step_id, status,
+                      started_at, finished_at, duration_ms, error_code, error_message, artifacts_json, extracted_variables_json, received_at
+       from step_events
+       where run_item_id = $1`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (received_at, event_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by received_at desc, event_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<StepEventProjectionRow>(sql, values);
+    return toPage(result.rows.map(mapStepEventProjection), query.limit, (stepEvent) => ({
+      primary: stepEvent.receivedAt,
+      secondary: stepEvent.eventId,
+    }));
   }
 
   async snapshot(): Promise<ControlPlaneStateSnapshot> {

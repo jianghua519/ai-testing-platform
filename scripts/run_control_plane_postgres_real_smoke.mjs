@@ -283,7 +283,7 @@ const main = async () => {
       runApiStatus: runPayload.status,
       runItemApiStatus: runItemPayload.status,
       stepEventApiCount: stepEventsPayload.items.length,
-      stepEventApiStepIds: stepEventsPayload.items.map((item) => item.sourceStepId),
+      stepEventApiStepIds: stepEventsPayload.items.map((item) => item.source_step_id),
       domainSummary,
       restoredEventCount: restoredEventsPayload.items.length,
       restoredRunApiStatus: restoredRunPayload.status,
