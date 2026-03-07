@@ -5,6 +5,7 @@ import {
   createWebWorkerJobFixture,
 } from '../apps/web-worker/dist/index.js';
 import { DefaultDslCompiler } from '../packages/dsl-compiler/dist/index.js';
+import { buildTenantTable, createAuthHeaders, seedProjectMemberships } from './lib/control_plane_auth.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -17,10 +18,10 @@ if (!connectionString) {
 
 const pool = new Pool({ connectionString });
 
-const postJson = async (url, payload) => {
+const postJson = async (url, payload, headers = {}) => {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(payload),
   });
 
@@ -31,8 +32,8 @@ const postJson = async (url, payload) => {
   };
 };
 
-const getJson = async (url) => {
-  const response = await fetch(url);
+const getJson = async (url, headers = {}) => {
+  const response = await fetch(url, { headers });
   const text = await response.text();
   return {
     status: response.status,
@@ -137,9 +138,22 @@ try {
   ];
   scenarios[1].runId = scenarios[0].runId;
   scenarios[2].runId = scenarios[0].runId;
+  const subjectId = '11111111-2222-3333-4444-555555555555';
+  const authHeaders = createAuthHeaders({ subjectId, tenantId: scopedFixture.tenantId });
+  const agentsTable = buildTenantTable(scopedFixture.tenantId, 'agents');
+  const jobLeasesTable = buildTenantTable(scopedFixture.tenantId, 'job_leases');
+  const stepEventsTable = buildTenantTable(scopedFixture.tenantId, 'step_events');
+  const artifactsTable = buildTenantTable(scopedFixture.tenantId, 'artifacts');
+  const runsTable = buildTenantTable(scopedFixture.tenantId, 'runs');
+  const runItemsTable = buildTenantTable(scopedFixture.tenantId, 'run_items');
   const agentId = randomUUID();
   const leaseToken = `lease-compose-${randomUUID()}`;
   const artifactId = randomUUID();
+  await seedProjectMemberships(pool, {
+    tenantId: scopedFixture.tenantId,
+    subjectId,
+    memberships: [{ projectId: scopedFixture.projectId, roles: ['qa', 'operator'] }],
+  });
 
   const overrideResponse = await postJson(
     `${baseUrl}/api/v1/internal/jobs/${scenarios[0].jobId}/steps/${secondStep.sourceStepId}:override`,
@@ -147,6 +161,9 @@ try {
       action: 'replace',
       replacement_step: secondStep,
       reason: 'compose smoke replace',
+      tenant_id: scenarios[0].tenantId,
+      run_id: scenarios[0].runId,
+      run_item_id: scenarios[0].runItemId,
     },
   );
 
@@ -214,7 +231,7 @@ try {
   }
 
   await pool.query(
-    `insert into agents (
+    `insert into ${agentsTable} (
        agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status, capabilities_json, metadata_json, last_heartbeat_at
      ) values ($1, $2, $3, $4, $5, $6, $7, $8, '["web","api"]'::jsonb, '{"source":"compose-smoke"}'::jsonb, now())
      on conflict (agent_id) do nothing`,
@@ -231,7 +248,7 @@ try {
   );
 
   await pool.query(
-    `insert into job_leases (
+    `insert into ${jobLeasesTable} (
        job_id, run_id, run_item_id, agent_id, lease_token, attempt_no, status, metadata_json, expires_at, heartbeat_at
      ) values ($1, $2, $3, $4, $5, $6, $7, '{"source":"compose-smoke"}'::jsonb, now() + interval '5 minutes', now())
      on conflict (lease_token) do nothing`,
@@ -248,7 +265,7 @@ try {
 
   const stepEventIdResult = await pool.query(
     `select event_id
-     from step_events
+     from ${stepEventsTable}
      where run_item_id = $1
      order by received_at desc
      limit 1`,
@@ -258,7 +275,7 @@ try {
   assertOk(Boolean(stepEventId), 'expected a step event for artifact insertion');
 
   await pool.query(
-    `insert into artifacts (
+    `insert into ${artifactsTable} (
        artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id, artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at
      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{"source":"compose-smoke"}'::jsonb, $13)
      on conflict (artifact_id) do nothing`,
@@ -291,9 +308,9 @@ try {
   ] = await Promise.all([
     getJson(`${baseUrl}/healthz`),
     getJson(`${baseUrl}/api/v1/internal/migrations`),
-    getJson(`${baseUrl}/api/v1/runs?tenant_id=${scenarios[0].tenantId}&project_id=${scenarios[0].projectId}&limit=2`),
+    getJson(`${baseUrl}/api/v1/runs?tenant_id=${scenarios[0].tenantId}&project_id=${scenarios[0].projectId}&limit=2`, authHeaders),
     getJson(`${baseUrl}/api/v1/internal/runs/${scenarios[0].runId}/step-events?limit=2`),
-    getJson(`${baseUrl}/api/v1/run-items?run_id=${scenarios[0].runId}&limit=2`),
+    getJson(`${baseUrl}/api/v1/run-items?run_id=${scenarios[0].runId}&limit=2`, authHeaders),
     getJson(`${baseUrl}/api/v1/internal/run-items/${scenarios[0].runItemId}/step-events?limit=1`),
     getJson(`${baseUrl}/api/v1/internal/runs/${scenarios[0].runId}/artifacts?limit=5`),
     getJson(`${baseUrl}/api/v1/internal/jobs/${scenarios[0].jobId}/events`),
@@ -301,9 +318,11 @@ try {
 
   const runsPage2 = await getJson(
     `${baseUrl}/api/v1/runs?tenant_id=${scenarios[0].tenantId}&project_id=${scenarios[0].projectId}&limit=2&cursor=${encodeURIComponent(runsPage1.body.next_cursor)}`,
+    authHeaders,
   );
   const runItemsPage2 = await getJson(
     `${baseUrl}/api/v1/run-items?run_id=${scenarios[0].runId}&limit=2&cursor=${encodeURIComponent(runItemPage1.body.next_cursor)}`,
+    authHeaders,
   );
   const runStepEventsPage2 = await getJson(
     `${baseUrl}/api/v1/internal/runs/${scenarios[0].runId}/step-events?limit=2&cursor=${encodeURIComponent(runStepEventsPage1.body.next_cursor)}`,
@@ -319,22 +338,23 @@ try {
     ),
     pool.query(
       `select
-         (select count(*)::int from runs) as runs_count,
-         (select count(*)::int from run_items) as run_items_count,
-         (select count(*)::int from step_events) as step_events_count`,
+         (select count(*)::int from ${runsTable}) as runs_count,
+         (select count(*)::int from ${runItemsTable}) as run_items_count,
+         (select count(*)::int from ${stepEventsTable}) as step_events_count`,
     ),
     pool.query(
       `select
-         (select count(*)::int from agents) as agents_count,
-         (select count(*)::int from job_leases) as job_leases_count,
-         (select count(*)::int from artifacts) as artifacts_count`,
+         (select count(*)::int from ${agentsTable}) as agents_count,
+         (select count(*)::int from ${jobLeasesTable}) as job_leases_count,
+         (select count(*)::int from ${artifactsTable}) as artifacts_count`,
     ),
     pool.query(
       `select table_name
        from information_schema.tables
-       where table_schema = 'public'
+       where table_schema = $1
          and table_name in ('agents', 'job_leases', 'artifacts')
        order by table_name asc`,
+      [scopedFixture.tenantId],
     ),
   ]);
 
@@ -343,7 +363,7 @@ try {
   assertOk(decisionResponse.status === 200 && decisionResponse.body.action === 'replace', 'step decision did not return replace');
   assertOk(firstPost.status === 202, `first step post expected 202, got ${firstPost.status}`);
   assertOk(duplicatePost.status === 200 && duplicatePost.body?.duplicate === true, 'duplicate event was not deduplicated');
-  assertOk(migrationsPage.body.items.length === 6, `expected 6 migrations, got ${migrationsPage.body.items.length}`);
+  assertOk(migrationsPage.body.items.length === 7, `expected 7 migrations, got ${migrationsPage.body.items.length}`);
   assertOk(runsPage1.body.items.length === 2 && runsPage1.body.next_cursor, 'runs page 1 pagination failed');
   assertOk(runsPage2.body.items.length === 1, 'runs page 2 expected 1 item');
   assertOk(runItemPage1.body.items.length === 2 && runItemPage1.body.next_cursor, 'run items page 1 pagination failed');

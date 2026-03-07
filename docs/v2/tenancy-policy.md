@@ -2,8 +2,8 @@
 title: V2 Tenancy Boundary Policy
 status: active
 owner: architecture
-last_updated: 2026-03-06
-summary: Normative tenant and project isolation rules for API, storage, events, and audit data.
+last_updated: 2026-03-07
+summary: Normative tenant-schema isolation and dynamic authorization rules for API, storage, events, and audit data.
 ---
 
 # V2 Tenancy Boundary Policy
@@ -30,8 +30,13 @@ Rules:
 - All authenticated requests resolve to a `principal` that includes:
   - `subject_id`
   - `tenant_id`
-  - `project_ids` (or a current `project_id`)
-  - `roles` / `permissions`
+  - current project grants
+  - current roles / permissions
+- JWT claims must carry stable identity context only:
+  - `sub` -> `subject_id`
+  - `tenant_id`
+  - optional token metadata such as `jti`, `iat`, `exp`
+- `project_ids`, `project_id`, `roles`, and `permissions` may change during long-running work and therefore must be resolved from the server-side authorization store on each request unless a shorter-lived delegation model is explicitly designed.
 - APIs must reject any request that attempts to:
   - access a different `tenant_id`
   - access a `project_id` not granted to the principal
@@ -40,13 +45,18 @@ Preferred mechanism:
 
 - `Authorization: Bearer <token>` is the single source of truth.
 - Explicit tenant headers are allowed only for operational tools, and must be consistent with token claims.
+- Project scoping may be supplied by the request, but the server must validate it against the latest authorization state for `(tenant_id, subject_id)`.
 
 ## Data Access Enforcement
 
 Minimum enforcement (required):
 
-- A server-side middleware injects `tenant_id` and `project_id` into request context.
-- Repository/query layer requires context and automatically scopes all queries by `(tenant_id, project_id?)`.
+- A server-side middleware injects authenticated `tenant_id` and the resolved authorization context into request handling.
+- Control-plane business tables may be isolated at the tenant-schema level:
+  - tenant-local tables live in `"tenant_id".<table_name>`
+  - shared registry/auth tables stay in `public`
+  - examples: `tenant_schemas`, entity locator tables, `subject_project_memberships`
+- Repository/query layer requires context and automatically scopes all queries by `tenant schema + project_id`.
 - Raw SQL access to business tables is forbidden in handlers; only repositories may query.
 
 Additional enforcement (recommended for higher assurance):
@@ -77,7 +87,7 @@ Object key prefix must include `tenant_id`:
 Download must use:
 
 - signed URLs with expiry
-- access checks against the requesting principal
+- access checks against the requesting principal and current project grant
 
 ## Audit and Retention
 

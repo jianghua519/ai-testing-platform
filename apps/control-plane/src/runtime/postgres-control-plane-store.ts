@@ -4,6 +4,7 @@ import type {
   ControlPlaneAcquireLeaseInput,
   ControlPlaneAcquireLeaseResult,
   ControlPlaneArtifactRecord,
+  ControlPlaneAuthenticatedActor,
   ControlPlaneCompleteLeaseInput,
   ControlPlaneEnqueueWebRunInput,
   ControlPlaneEnqueueWebRunResult,
@@ -18,6 +19,7 @@ import type {
   ControlPlaneListStepEventsQuery,
   ControlPlaneMigrationRecord,
   ControlPlanePage,
+  ControlPlanePrincipal,
   ControlPlaneRegisterAgentInput,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
@@ -41,6 +43,7 @@ import {
 } from './postgres-migrations.js';
 import { buildWebRunRequiredCapabilities, normalizeCapabilities } from './job-capabilities.js';
 import { decodeCursor, encodeCursor } from './pagination.js';
+import { buildTenantBusinessSchemaSql, quotePostgresIdentifier } from './postgres-schema.js';
 
 interface SqlQueryResult<Row> {
   rows: Row[];
@@ -79,11 +82,6 @@ interface SnapshotDecisionRow {
   reason: string | null;
   replacement_step_json: CompiledStep | string | null;
   resume_after_ms: number | null;
-}
-
-interface StepDecisionLookupRow {
-  run_id: string;
-  run_item_id: string;
 }
 
 interface RunProjectionRow {
@@ -215,6 +213,27 @@ interface ExpiredLeaseRow {
   run_item_id: string | null;
 }
 
+interface EntityLocatorRow {
+  tenant_id: string;
+  project_id: string | null;
+  run_id?: string | null;
+  run_item_id?: string | null;
+  job_id?: string | null;
+  agent_id?: string | null;
+}
+
+interface TenantSchemaRow {
+  tenant_id: string;
+  schema_name: string;
+}
+
+interface SubjectProjectMembershipRow {
+  tenant_id: string;
+  subject_id: string;
+  project_id: string;
+  roles_json: string[] | string;
+}
+
 export interface PostgresControlPlaneStoreOptions {
   connectionString?: string;
   pool?: SqlPoolLike;
@@ -321,7 +340,7 @@ const buildStepEventValues = (envelope: StepResultReportedEnvelope) => ({
   envelopeJson: JSON.stringify(envelope),
 });
 
-const upsertProjectionStatusSql = (tableName: 'runs' | 'run_items', keyField: 'run_id' | 'run_item_id') => `
+const upsertProjectionStatusSql = (tableName: string, keyField: 'run_id' | 'run_item_id') => `
   insert into ${tableName} (
     ${keyField},
     tenant_id,
@@ -474,6 +493,8 @@ const mapCompletionToProjectionStatus = (status: ControlPlaneCompleteLeaseInput[
 };
 
 export class PostgresControlPlaneStore implements ControlPlaneStore {
+  private readonly ensuredTenantSchemas = new Set<string>();
+
   private constructor(
     private readonly pool: SqlPoolLike,
     private readonly ownPool: boolean,
@@ -495,6 +516,37 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
     return listControlPlanePostgresMigrations(this.pool);
+  }
+
+  async resolvePrincipal(actor: ControlPlaneAuthenticatedActor): Promise<ControlPlanePrincipal> {
+    const result = await this.pool.query<SubjectProjectMembershipRow>(
+      `select tenant_id, subject_id, project_id, roles_json
+       from subject_project_memberships
+       where tenant_id = $1
+         and subject_id = $2
+         and status = 'active'
+       order by project_id asc`,
+      [actor.tenantId, actor.subjectId],
+    );
+
+    const projectGrants = result.rows.map((row) => ({
+      projectId: row.project_id,
+      roles: Array.from(new Set((parseJsonColumn<string[]>(row.roles_json) ?? []).filter((role) => role.length > 0))),
+    }));
+    const roleSet = new Set<string>();
+    for (const grant of projectGrants) {
+      for (const role of grant.roles) {
+        roleSet.add(role);
+      }
+    }
+
+    return {
+      subjectId: actor.subjectId,
+      tenantId: actor.tenantId,
+      projectIds: projectGrants.map((grant) => grant.projectId),
+      roles: [...roleSet].sort(),
+      projectGrants,
+    };
   }
 
   async enqueueWebRun(input: ControlPlaneEnqueueWebRunInput): Promise<ControlPlaneEnqueueWebRunResult> {
@@ -523,8 +575,11 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(input.tenantId, client);
+      const runsTable = this.tableName(tenantSchema, 'runs');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
       await client.query(
-        `insert into runs (
+        `insert into ${runsTable} (
            run_id,
            tenant_id,
            project_id,
@@ -547,8 +602,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           now,
         ],
       );
+      await this.upsertRunLocator(client, runId, input.tenantId, input.projectId);
       await client.query(
-        `insert into run_items (
+        `insert into ${runItemsTable} (
            run_item_id,
            run_id,
            job_id,
@@ -579,6 +635,13 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           now,
         ],
       );
+      await this.upsertRunItemLocator(client, {
+        runItemId,
+        runId,
+        jobId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+      });
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -627,8 +690,10 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async registerAgent(input: ControlPlaneRegisterAgentInput): Promise<ControlPlaneAgentRecord> {
     const capabilities = normalizeCapabilities(input.capabilities);
+    await this.ensureTenantSchema(input.tenantId);
+    const agentsTable = this.tableName(input.tenantId, 'agents');
     const result = await this.pool.query<AgentRow>(
-      `insert into agents (
+      `insert into ${agentsTable} (
          agent_id,
          tenant_id,
          project_id,
@@ -673,14 +738,20 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         Math.max(1, input.maxParallelSlots ?? 1),
       ],
     );
-
+    await this.upsertAgentLocator(this.pool, input.agentId, input.tenantId, input.projectId ?? null);
     return mapAgent(result.rows[0]);
   }
 
   async heartbeatAgent(agentId: string, input: ControlPlaneHeartbeatAgentInput): Promise<ControlPlaneAgentRecord | undefined> {
+    const locator = await this.getAgentLocator(agentId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const capabilities = input.capabilities ? normalizeCapabilities(input.capabilities) : undefined;
+    const agentsTable = this.tableName(locator.tenant_id, 'agents');
     const result = await this.pool.query<AgentRow>(
-      `update agents
+      `update ${agentsTable}
        set status = coalesce($2, status),
            capabilities_json = coalesce($3::jsonb, capabilities_json),
            metadata_json = coalesce($4::jsonb, metadata_json),
@@ -703,15 +774,25 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async acquireLease(agentId: string, input: ControlPlaneAcquireLeaseInput): Promise<ControlPlaneAcquireLeaseResult | undefined> {
+    const locator = await this.getAgentLocator(agentId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const agentsTable = this.tableName(tenantSchema, 'agents');
+      const jobLeasesTable = this.tableName(tenantSchema, 'job_leases');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
+      const runsTable = this.tableName(tenantSchema, 'runs');
       await this.reclaimExpiredLeases(client);
 
       const agentResult = await client.query<AgentRow>(
         `select agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
                 capabilities_json, metadata_json, max_parallel_slots, last_heartbeat_at, created_at, updated_at
-         from agents
+         from ${agentsTable}
          where agent_id = $1
          limit 1
          for update`,
@@ -727,7 +808,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const agentCapabilities = normalizeCapabilities(agent.capabilities);
       const activeLeaseCountResult = await client.query<{ active_lease_count: number }>(
         `select count(*)::int as active_lease_count
-         from job_leases
+         from ${jobLeasesTable}
          where agent_id = $1
            and released_at is null`,
         [agentId],
@@ -741,7 +822,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
                 required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
                 last_event_id, created_at, updated_at, job_payload_json
-         from run_items
+         from ${runItemsTable}
          where tenant_id = $1
            and ($2::text is null or project_id = $2)
            and status = 'pending'
@@ -763,7 +844,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const leaseToken = randomUUID();
       const ttlSeconds = Math.max(10, input.leaseTtlSeconds);
       const leaseResult = await client.query<LeaseRow>(
-        `insert into job_leases (
+        `insert into ${jobLeasesTable} (
            job_id,
            run_id,
            run_item_id,
@@ -789,9 +870,17 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           ttlSeconds,
         ],
       );
+      await this.upsertLeaseLocator(client, {
+        leaseToken,
+        jobId: candidate.job_id,
+        runId: candidate.run_id,
+        runItemId: candidate.run_item_id,
+        agentId,
+        tenantId: locator.tenant_id,
+      });
 
       await client.query(
-        `update run_items
+        `update ${runItemsTable}
          set status = 'dispatched',
              assigned_agent_id = $2,
              lease_token = $3,
@@ -800,14 +889,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         [candidate.run_item_id, agentId, leaseToken],
       );
       await client.query(
-        `update runs
+        `update ${runsTable}
          set status = case when status in ('created', 'queued') then 'running' else status end,
              updated_at = now()
          where run_id = $1`,
         [candidate.run_id],
       );
       await client.query(
-        `update agents
+        `update ${agentsTable}
          set status = 'online',
              last_heartbeat_at = now(),
              updated_at = now()
@@ -829,9 +918,15 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async heartbeatLease(leaseToken: string, input: ControlPlaneHeartbeatLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined> {
+    const locator = await this.getLeaseLocator(leaseToken);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const ttlSeconds = Math.max(10, input.leaseTtlSeconds);
+    const jobLeasesTable = this.tableName(locator.tenant_id, 'job_leases');
     const result = await this.pool.query<LeaseRow>(
-      `update job_leases
+      `update ${jobLeasesTable}
        set heartbeat_at = now(),
            expires_at = now() + make_interval(secs => $2)
        where lease_token = $1
@@ -845,12 +940,21 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async completeLease(leaseToken: string, input: ControlPlaneCompleteLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined> {
+    const locator = await this.getLeaseLocator(leaseToken);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const jobLeasesTable = this.tableName(tenantSchema, 'job_leases');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
+      const runsTable = this.tableName(tenantSchema, 'runs');
       const mappedStatus = mapCompletionToProjectionStatus(input.status);
       const result = await client.query<LeaseRow>(
-        `update job_leases
+        `update ${jobLeasesTable}
          set status = $2,
              released_at = now(),
              heartbeat_at = now()
@@ -864,7 +968,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         const existingResult = await client.query<LeaseRow>(
           `select lease_id, job_id, run_id, run_item_id, agent_id, lease_token, attempt_no, status,
                   acquired_at, expires_at, heartbeat_at, released_at
-           from job_leases
+           from ${jobLeasesTable}
            where lease_token = $1
            limit 1`,
           [leaseToken],
@@ -880,7 +984,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const lease = mapLease(result.rows[0]);
       await client.query(
-        `update run_items
+        `update ${runItemsTable}
          set assigned_agent_id = null,
              lease_token = null,
              control_state = 'active',
@@ -896,7 +1000,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       if (mappedStatus !== 'passed') {
         await client.query(
-          `update runs
+          `update ${runsTable}
            set status = case
              when status in ('passed', 'failed', 'canceled') then status
              else $2
@@ -918,12 +1022,20 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async pauseRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const locator = await this.getRunLocator(runId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const runsTable = this.tableName(tenantSchema, 'runs');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
       const runResult = await client.query<RunProjectionRow>(
         `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
-         from runs
+         from ${runsTable}
          where run_id = $1
          limit 1
          for update`,
@@ -935,7 +1047,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       }
 
       await client.query(
-        `update run_items
+        `update ${runItemsTable}
          set control_state = case
                when status in ('passed', 'failed', 'canceled') then control_state
                else 'pause_requested'
@@ -949,7 +1061,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         [runId],
       );
       await client.query(
-        `update runs
+        `update ${runsTable}
          set updated_at = now()
          where run_id = $1`,
         [runId],
@@ -966,12 +1078,20 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async resumeRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const locator = await this.getRunLocator(runId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const runsTable = this.tableName(tenantSchema, 'runs');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
       const runResult = await client.query<RunProjectionRow>(
         `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
-         from runs
+         from ${runsTable}
          where run_id = $1
          limit 1
          for update`,
@@ -983,7 +1103,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       }
 
       await client.query(
-        `update run_items
+        `update ${runItemsTable}
          set control_state = 'active',
              control_reason = null,
              updated_at = now()
@@ -992,7 +1112,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         [runId],
       );
       await client.query(
-        `update runs
+        `update ${runsTable}
          set status = case
                when status = 'canceling' then status
                else status
@@ -1013,12 +1133,21 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async cancelRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const locator = await this.getRunLocator(runId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const runsTable = this.tableName(tenantSchema, 'runs');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
+      const jobLeasesTable = this.tableName(tenantSchema, 'job_leases');
       const runResult = await client.query<RunProjectionRow>(
         `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
-         from runs
+         from ${runsTable}
          where run_id = $1
          limit 1
          for update`,
@@ -1030,7 +1159,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       }
 
       await client.query(
-        `update run_items
+        `update ${runItemsTable}
          set status = case when status = 'pending' then 'canceled' else status end,
              finished_at = case when status = 'pending' then now() else finished_at end,
              control_state = case
@@ -1052,7 +1181,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const pendingLeaseTokens = await client.query<{ lease_token: string }>(
         `select lease_token
-         from run_items
+         from ${runItemsTable}
          where run_id = $1
            and status = 'canceled'
            and lease_token is not null`,
@@ -1060,7 +1189,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       );
       if (pendingLeaseTokens.rows.length > 0) {
         await client.query(
-          `update job_leases
+          `update ${jobLeasesTable}
            set status = 'canceled',
                released_at = now(),
                heartbeat_at = now()
@@ -1072,14 +1201,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const activeRemaining = await client.query<{ active_count: number }>(
         `select count(*)::int as active_count
-         from run_items
+         from ${runItemsTable}
          where run_id = $1
            and status not in ('passed', 'failed', 'canceled')`,
         [runId],
       );
       const nextRunStatus = (activeRemaining.rows[0]?.active_count ?? 0) > 0 ? 'canceling' : 'canceled';
       await client.query(
-        `update runs
+        `update ${runsTable}
          set status = $2,
              finished_at = case when $2 = 'canceled' then coalesce(finished_at, now()) else finished_at end,
              updated_at = now()
@@ -1101,10 +1230,12 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(envelope.tenant_id, client);
+      const runnerEventsTable = this.tableName(tenantSchema, 'control_plane_runner_events');
       const event = toRunnerEventFields(envelope);
       try {
         await client.query(
-          `insert into control_plane_runner_events (
+          `insert into ${runnerEventsTable} (
              event_id,
              event_type,
              tenant_id,
@@ -1138,6 +1269,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
             event.envelopeJson,
           ],
         );
+        await this.upsertRunLocator(client, event.runId, event.tenantId, event.projectId);
+        await this.upsertRunItemLocator(client, {
+          runItemId: event.runItemId,
+          runId: event.runId,
+          jobId: event.jobId,
+          tenantId: event.tenantId,
+          projectId: event.projectId,
+        });
       } catch (error) {
         if ((error as { code?: string }).code === '23505') {
           await client.query('rollback');
@@ -1183,9 +1322,15 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listJobEvents(jobId: string): Promise<RecordedRunnerEvent[]> {
+    const locator = await this.getRunItemLocatorByJobId(jobId);
+    if (!locator?.tenant_id) {
+      return [];
+    }
+
+    const runnerEventsTable = this.tableName(locator.tenant_id, 'control_plane_runner_events');
     const result = await this.pool.query<RunnerEventRow>(
       `select job_id, event_id, envelope_json
-       from control_plane_runner_events
+       from ${runnerEventsTable}
        where job_id = $1
        order by received_at asc, event_id asc`,
       [jobId],
@@ -1200,18 +1345,38 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     });
   }
 
-  async enqueueStepDecision(jobId: string, sourceStepId: string, decision: StepControlResponse): Promise<void> {
-    const lookup = await this.pool.query<StepDecisionLookupRow>(
-      `select run_id, run_item_id
-       from run_items
-       where job_id = $1
-       limit 1`,
-      [jobId],
-    );
-    const related = lookup.rows[0];
+  async enqueueStepDecision(
+    jobId: string,
+    sourceStepId: string,
+    decision: StepControlResponse,
+    context?: { tenantId?: string; runId?: string; runItemId?: string },
+  ): Promise<void> {
+    const related = await this.getRunItemLocatorByJobId(jobId);
+    const contextualRunItem = !related && context?.runItemId
+      ? await this.getRunItemLocatorByRunItemId(context.runItemId)
+      : undefined;
+    const contextualRun = !related && context?.runId
+      ? await this.getRunLocator(context.runId)
+      : undefined;
+    const tenantId = related?.tenant_id
+      ?? contextualRunItem?.tenant_id
+      ?? contextualRun?.tenant_id
+      ?? context?.tenantId;
+    if (tenantId) {
+      await this.ensureTenantSchema(tenantId);
+    }
+    const stepDecisionsTable = tenantId
+      ? this.tableName(tenantId, 'step_decisions')
+      : 'step_decisions';
+    const runId = related?.run_id
+      ?? contextualRunItem?.run_id
+      ?? (contextualRun?.tenant_id === tenantId ? context?.runId ?? null : null);
+    const runItemId = related?.run_item_id
+      ?? contextualRunItem?.run_item_id
+      ?? null;
 
     await this.pool.query(
-      `insert into step_decisions (
+      `insert into ${stepDecisionsTable} (
          job_id,
          run_id,
          run_item_id,
@@ -1223,8 +1388,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
        ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
       [
         jobId,
-        related?.run_id ?? null,
-        related?.run_item_id ?? null,
+        runId,
+        runItemId,
         sourceStepId,
         decision.action,
         decision.reason ?? null,
@@ -1238,7 +1403,24 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const client = await this.pool.connect();
     try {
       await client.query('begin');
-      const decisionResult = await client.query<StepDecisionRow>(
+      const locator = await this.getRunItemLocatorByJobId(jobId, client);
+      const tenantTable = locator?.tenant_id ? this.tableName(locator.tenant_id, 'step_decisions') : null;
+      const decisionResult = tenantTable
+        ? await client.query<StepDecisionRow>(
+          `select decision_id, action, reason, replacement_step_json, resume_after_ms
+           from ${tenantTable}
+           where job_id = $1
+             and source_step_id = $2
+             and consumed_at is null
+           order by decision_id asc
+           limit 1`,
+          [jobId, sourceStepId],
+        )
+        : { rows: [] };
+      const tableName = decisionResult.rows.length > 0 ? tenantTable : 'step_decisions';
+      const fallbackDecisionResult = decisionResult.rows.length > 0
+        ? decisionResult
+        : await client.query<StepDecisionRow>(
         `select decision_id, action, reason, replacement_step_json, resume_after_ms
          from step_decisions
          where job_id = $1
@@ -1249,14 +1431,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         [jobId, sourceStepId],
       );
 
-      if (decisionResult.rows.length === 0) {
+      if (fallbackDecisionResult.rows.length === 0) {
         await client.query('rollback');
         return undefined;
       }
 
-      const decisionRow = decisionResult.rows[0];
+      const decisionRow = fallbackDecisionResult.rows[0];
       const updateResult = await client.query(
-        `update step_decisions
+        `update ${tableName}
          set consumed_at = now()
          where decision_id = $1
            and consumed_at is null`,
@@ -1283,13 +1465,23 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     _runId: string,
     runItemId: string,
     sourceStepId: string,
+    context?: { tenantId?: string },
   ): Promise<StepControlResponse | undefined> {
+    const locator = await this.getRunItemLocatorByRunItemId(runItemId);
+    const tenantId = locator?.tenant_id ?? context?.tenantId;
+    if (!tenantId) {
+      return this.dequeueStepDecision(jobId, sourceStepId);
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('begin');
+      await this.ensureTenantSchema(tenantId, client);
+      const runItemsTable = this.tableName(tenantId, 'run_items');
+      const stepDecisionsTable = this.tableName(tenantId, 'step_decisions');
       const runItemResult = await client.query<{ control_state: string | null; control_reason: string | null }>(
         `select control_state, control_reason
-         from run_items
+         from ${runItemsTable}
          where run_item_id = $1
            and job_id = $2
          limit 1
@@ -1310,7 +1502,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       if (controlState === 'pause_requested' || controlState === 'paused') {
         if (controlState === 'pause_requested') {
           await client.query(
-            `update run_items
+            `update ${runItemsTable}
              set control_state = 'paused',
                  updated_at = now()
              where run_item_id = $1`,
@@ -1327,7 +1519,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const decisionResult = await client.query<StepDecisionRow>(
         `select decision_id, action, reason, replacement_step_json, resume_after_ms
-         from step_decisions
+         from ${stepDecisionsTable}
          where job_id = $1
            and source_step_id = $2
            and consumed_at is null
@@ -1335,15 +1527,28 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          limit 1`,
         [jobId, sourceStepId],
       );
+      const tableName = decisionResult.rows.length > 0 ? stepDecisionsTable : 'step_decisions';
+      const selectedDecisionResult = decisionResult.rows.length > 0
+        ? decisionResult
+        : await client.query<StepDecisionRow>(
+          `select decision_id, action, reason, replacement_step_json, resume_after_ms
+           from step_decisions
+           where job_id = $1
+             and source_step_id = $2
+             and consumed_at is null
+           order by decision_id asc
+           limit 1`,
+          [jobId, sourceStepId],
+        );
 
-      if (decisionResult.rows.length === 0) {
+      if (selectedDecisionResult.rows.length === 0) {
         await client.query('commit');
         return undefined;
       }
 
-      const decisionRow = decisionResult.rows[0];
+      const decisionRow = selectedDecisionResult.rows[0];
       const updateResult = await client.query(
-        `update step_decisions
+        `update ${tableName}
          set consumed_at = now()
          where decision_id = $1
            and consumed_at is null`,
@@ -1366,9 +1571,15 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async getRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const locator = await this.getRunLocator(runId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const runsTable = this.tableName(locator.tenant_id, 'runs');
     const result = await this.pool.query<RunProjectionRow>(
       `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
-       from runs
+       from ${runsTable}
        where run_id = $1
        limit 1`,
       [runId],
@@ -1377,10 +1588,16 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listRuns(query: ControlPlaneListRunsQuery): Promise<ControlPlanePage<ControlPlaneRunRecord>> {
+    const tenantSchema = await this.resolveTenantSchema(query.tenantId);
+    if (!tenantSchema) {
+      return { items: [] };
+    }
+
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.tenantId, query.projectId];
+    const runsTable = this.tableName(tenantSchema, 'runs');
     let sql = `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
-       from runs
+       from ${runsTable}
        where tenant_id = $1
          and project_id = $2`;
 
@@ -1403,11 +1620,17 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
+    const locator = await this.getRunItemLocatorByRunItemId(runItemId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const runItemsTable = this.tableName(locator.tenant_id, 'run_items');
     const result = await this.pool.query<RunItemProjectionRow>(
       `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
               required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
               started_at, finished_at, last_event_id, created_at, updated_at
-       from run_items
+       from ${runItemsTable}
        where run_item_id = $1
        limit 1`,
       [runItemId],
@@ -1416,12 +1639,18 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>> {
+    const locator = await this.getRunLocator(query.runId);
+    if (!locator?.tenant_id) {
+      return { items: [] };
+    }
+
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.runId];
+    const runItemsTable = this.tableName(locator.tenant_id, 'run_items');
     let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
                       required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
                       started_at, finished_at, last_event_id, created_at, updated_at
-       from run_items
+       from ${runItemsTable}
        where run_id = $1`;
 
     if (cursor) {
@@ -1443,11 +1672,17 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listStepEventsByRun(runId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    const locator = await this.getRunLocator(runId);
+    if (!locator?.tenant_id) {
+      return { items: [] };
+    }
+
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [runId];
+    const stepEventsTable = this.tableName(locator.tenant_id, 'step_events');
     let sql = `select event_id, run_id, run_item_id, job_id, tenant_id, project_id, attempt_no, compiled_step_id, source_step_id, status,
                       started_at, finished_at, duration_ms, error_code, error_message, artifacts_json, extracted_variables_json, received_at
-       from step_events
+       from ${stepEventsTable}
        where run_id = $1`;
 
     if (cursor) {
@@ -1469,11 +1704,17 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>> {
+    const locator = await this.getRunItemLocatorByRunItemId(runItemId);
+    if (!locator?.tenant_id) {
+      return { items: [] };
+    }
+
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [runItemId];
+    const stepEventsTable = this.tableName(locator.tenant_id, 'step_events');
     let sql = `select event_id, run_id, run_item_id, job_id, tenant_id, project_id, attempt_no, compiled_step_id, source_step_id, status,
                       started_at, finished_at, duration_ms, error_code, error_message, artifacts_json, extracted_variables_json, received_at
-       from step_events
+       from ${stepEventsTable}
        where run_item_id = $1`;
 
     if (cursor) {
@@ -1495,11 +1736,17 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listArtifactsByRun(runId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>> {
+    const locator = await this.getRunLocator(runId);
+    if (!locator?.tenant_id) {
+      return { items: [] };
+    }
+
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [runId];
+    const artifactsTable = this.tableName(locator.tenant_id, 'artifacts');
     let sql = `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
                       artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
-       from artifacts
+       from ${artifactsTable}
        where run_id = $1`;
 
     if (cursor) {
@@ -1521,11 +1768,17 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async listArtifactsByRunItem(runItemId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>> {
+    const locator = await this.getRunItemLocatorByRunItemId(runItemId);
+    if (!locator?.tenant_id) {
+      return { items: [] };
+    }
+
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [runItemId];
+    const artifactsTable = this.tableName(locator.tenant_id, 'artifacts');
     let sql = `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
                       artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
-       from artifacts
+       from ${artifactsTable}
        where run_item_id = $1`;
 
     if (cursor) {
@@ -1547,10 +1800,16 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async getArtifact(artifactId: string): Promise<ControlPlaneArtifactRecord | undefined> {
+    const locator = await this.getArtifactLocator(artifactId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const artifactsTable = this.tableName(locator.tenant_id, 'artifacts');
     const result = await this.pool.query<ArtifactRow>(
       `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
               artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
-       from artifacts
+       from ${artifactsTable}
        where artifact_id = $1
        limit 1`,
       [artifactId],
@@ -1561,17 +1820,30 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async listExpiredArtifacts(query: ControlPlaneListExpiredArtifactsQuery): Promise<ControlPlaneArtifactRecord[]> {
     const expiresBefore = query.expiresBefore ?? new Date().toISOString();
-    const result = await this.pool.query<ArtifactRow>(
-      `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
-              artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
-       from artifacts
-       where retention_expires_at is not null
-         and retention_expires_at <= $1
-       order by retention_expires_at asc, artifact_id asc
-       limit $2`,
-      [expiresBefore, query.limit],
-    );
-    return result.rows.map(mapArtifact);
+    const tenantSchemas = await this.listTenantSchemas();
+    const items: ControlPlaneArtifactRecord[] = [];
+
+    for (const tenantId of tenantSchemas) {
+      const artifactsTable = this.tableName(tenantId, 'artifacts');
+      const result = await this.pool.query<ArtifactRow>(
+        `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
+                artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
+         from ${artifactsTable}
+         where retention_expires_at is not null
+           and retention_expires_at <= $1
+         order by retention_expires_at asc, artifact_id asc
+         limit $2`,
+        [expiresBefore, query.limit],
+      );
+      items.push(...result.rows.map(mapArtifact));
+      if (items.length >= query.limit) {
+        break;
+      }
+    }
+
+    return items
+      .sort((left, right) => (left.retentionExpiresAt ?? '').localeCompare(right.retentionExpiresAt ?? '') || left.artifactId.localeCompare(right.artifactId))
+      .slice(0, query.limit);
   }
 
   async deleteArtifacts(artifactIds: string[]): Promise<number> {
@@ -1579,42 +1851,89 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       return 0;
     }
 
-    const result = await this.pool.query(
-      `delete from artifacts
-       where artifact_id = any($1::text[])`,
-      [artifactIds],
-    );
-    return result.rowCount ?? 0;
+    const locators = await Promise.all(artifactIds.map((artifactId) => this.getArtifactLocator(artifactId)));
+    const grouped = new Map<string, string[]>();
+    for (let index = 0; index < artifactIds.length; index += 1) {
+      const locator = locators[index];
+      if (!locator?.tenant_id) {
+        continue;
+      }
+      const ids = grouped.get(locator.tenant_id) ?? [];
+      ids.push(artifactIds[index]);
+      grouped.set(locator.tenant_id, ids);
+    }
+
+    let deletedCount = 0;
+    for (const [tenantId, ids] of grouped.entries()) {
+      const artifactsTable = this.tableName(tenantId, 'artifacts');
+      const result = await this.pool.query(
+        `delete from ${artifactsTable}
+         where artifact_id = any($1::text[])`,
+        [ids],
+      );
+      deletedCount += result.rowCount ?? 0;
+    }
+
+    if (deletedCount > 0) {
+      await this.pool.query(
+        `delete from artifact_locators
+         where artifact_id = any($1::text[])`,
+        [artifactIds],
+      );
+    }
+    return deletedCount;
   }
 
   async snapshot(): Promise<ControlPlaneStateSnapshot> {
-    const [eventsResult, decisionsResult] = await Promise.all([
-      this.pool.query<RunnerEventRow>(
-        `select job_id, event_id, envelope_json
-         from control_plane_runner_events
-         order by received_at asc, event_id asc`,
-      ),
-      this.pool.query<SnapshotDecisionRow>(
-        `select job_id, source_step_id, action, reason, replacement_step_json, resume_after_ms
-         from step_decisions
-         where consumed_at is null
-         order by decision_id asc`,
-      ),
-    ]);
-
     const eventsByJob: ControlPlaneStateSnapshot['eventsByJob'] = {};
-    for (const row of eventsResult.rows) {
-      const envelope = parseJsonColumn<RunnerResultEnvelope>(row.envelope_json) as RunnerResultEnvelope;
-      const events = eventsByJob[row.job_id] ?? [];
-      events.push({
-        receivedAt: envelope.occurred_at,
-        envelope,
-      });
-      eventsByJob[row.job_id] = events;
+    const pendingDecisionsByJob: ControlPlaneStateSnapshot['pendingDecisionsByJob'] = {};
+    const tenantSchemas = await this.listTenantSchemas();
+    const receivedEventIds: string[] = [];
+    const publicDecisionsResult = await this.pool.query<SnapshotDecisionRow>(
+      `select job_id, source_step_id, action, reason, replacement_step_json, resume_after_ms
+       from step_decisions
+       where consumed_at is null
+       order by decision_id asc`,
+    );
+
+    for (const tenantId of tenantSchemas) {
+      const eventsTable = this.tableName(tenantId, 'control_plane_runner_events');
+      const decisionsTable = this.tableName(tenantId, 'step_decisions');
+      const [eventsResult, decisionsResult] = await Promise.all([
+        this.pool.query<RunnerEventRow>(
+          `select job_id, event_id, envelope_json
+           from ${eventsTable}
+           order by received_at asc, event_id asc`,
+        ),
+        this.pool.query<SnapshotDecisionRow>(
+          `select job_id, source_step_id, action, reason, replacement_step_json, resume_after_ms
+           from ${decisionsTable}
+           where consumed_at is null
+           order by decision_id asc`,
+        ),
+      ]);
+
+      for (const row of eventsResult.rows) {
+        const envelope = parseJsonColumn<RunnerResultEnvelope>(row.envelope_json) as RunnerResultEnvelope;
+        const events = eventsByJob[row.job_id] ?? [];
+        events.push({
+          receivedAt: envelope.occurred_at,
+          envelope,
+        });
+        eventsByJob[row.job_id] = events;
+        receivedEventIds.push(row.event_id);
+      }
+
+      for (const row of decisionsResult.rows) {
+        const byStep = pendingDecisionsByJob[row.job_id] ?? {};
+        const queue = byStep[row.source_step_id] ?? [];
+        queue.push(buildStepDecision(row));
+        byStep[row.source_step_id] = queue;
+        pendingDecisionsByJob[row.job_id] = byStep;
+      }
     }
 
-    const pendingDecisionsByJob: ControlPlaneStateSnapshot['pendingDecisionsByJob'] = {};
-    for (const row of decisionsResult.rows) {
+    for (const row of publicDecisionsResult.rows) {
       const byStep = pendingDecisionsByJob[row.job_id] ?? {};
       const queue = byStep[row.source_step_id] ?? [];
       queue.push(buildStepDecision(row));
@@ -1625,7 +1944,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     return {
       eventsByJob,
       pendingDecisionsByJob,
-      receivedEventIds: eventsResult.rows.map((row) => row.event_id),
+      receivedEventIds,
     };
   }
 
@@ -1635,57 +1954,286 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     }
   }
 
-  private async reclaimExpiredLeases(client: SqlPoolClientLike): Promise<void> {
-    const expiredResult = await client.query<ExpiredLeaseRow>(
-      `update job_leases
-       set status = 'expired',
-           released_at = now()
-       where released_at is null
-         and expires_at < now()
-       returning run_id, run_item_id`,
-    );
+  private tableName(tenantId: string, tableName: string): string {
+    return `${quotePostgresIdentifier(tenantId)}.${quotePostgresIdentifier(tableName)}`;
+  }
 
-    const expiredRunItemIds = expiredResult.rows
-      .map((row) => row.run_item_id)
-      .filter((value): value is string => Boolean(value));
-    if (expiredRunItemIds.length > 0) {
-      await client.query(
-        `update run_items
-         set status = 'pending',
-             assigned_agent_id = null,
-             lease_token = null,
-             updated_at = now()
-         where run_item_id = any($1::text[])
-           and status in ('dispatched', 'running')`,
-        [expiredRunItemIds],
-      );
+  private async listTenantSchemas(): Promise<string[]> {
+    const result = await this.pool.query<TenantSchemaRow>(
+      `select tenant_id, schema_name
+       from tenant_schemas
+       order by tenant_id asc`,
+    );
+    for (const row of result.rows) {
+      this.ensuredTenantSchemas.add(row.tenant_id);
+    }
+    return result.rows.map((row) => row.tenant_id);
+  }
+
+  private async resolveTenantSchema(tenantId: string, executor: SqlPoolLike | SqlPoolClientLike = this.pool): Promise<string | undefined> {
+    if (this.ensuredTenantSchemas.has(tenantId)) {
+      return tenantId;
     }
 
-    const expiredRunIds = Array.from(new Set(expiredResult.rows
-      .map((row) => row.run_id)
-      .filter((value): value is string => Boolean(value))));
-    if (expiredRunIds.length > 0) {
-      await client.query(
-        `update runs
-         set status = 'queued',
-             updated_at = now()
-         where run_id = any($1::text[])
-           and status = 'running'
-           and exists (
-             select 1
-             from run_items
-             where run_items.run_id = runs.run_id
-               and run_items.status = 'pending'
-           )`,
-        [expiredRunIds],
+    const result = await executor.query<TenantSchemaRow>(
+      `select tenant_id, schema_name
+       from tenant_schemas
+       where tenant_id = $1
+       limit 1`,
+      [tenantId],
+    );
+    if (result.rows.length === 0) {
+      return undefined;
+    }
+
+    this.ensuredTenantSchemas.add(tenantId);
+    return result.rows[0].schema_name;
+  }
+
+  private async ensureTenantSchema(tenantId: string, executor: SqlPoolLike | SqlPoolClientLike = this.pool): Promise<string> {
+    const existing = await this.resolveTenantSchema(tenantId, executor);
+    if (existing) {
+      return existing;
+    }
+
+    await executor.query(
+      `insert into tenant_schemas (tenant_id, schema_name)
+       values ($1, $2)
+       on conflict (tenant_id) do update set
+         schema_name = excluded.schema_name,
+         updated_at = now()`,
+      [tenantId, tenantId],
+    );
+    await executor.query(buildTenantBusinessSchemaSql(tenantId));
+    this.ensuredTenantSchemas.add(tenantId);
+    return tenantId;
+  }
+
+  private async getRunLocator(runId: string, executor: SqlPoolLike | SqlPoolClientLike = this.pool): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id
+       from run_locators
+       where run_id = $1
+       limit 1`,
+      [runId],
+    );
+    return result.rows[0];
+  }
+
+  private async getRunItemLocatorByRunItemId(
+    runItemId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, run_id, run_item_id, job_id
+       from run_item_locators
+       where run_item_id = $1
+       limit 1`,
+      [runItemId],
+    );
+    return result.rows[0];
+  }
+
+  private async getRunItemLocatorByJobId(
+    jobId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, run_id, run_item_id, job_id
+       from run_item_locators
+       where job_id = $1
+       limit 1`,
+      [jobId],
+    );
+    return result.rows[0];
+  }
+
+  private async getArtifactLocator(
+    artifactId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, run_id, run_item_id
+       from artifact_locators
+       where artifact_id = $1
+       limit 1`,
+      [artifactId],
+    );
+    return result.rows[0];
+  }
+
+  private async getAgentLocator(
+    agentId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, agent_id
+       from agent_locators
+       where agent_id = $1
+       limit 1`,
+      [agentId],
+    );
+    return result.rows[0];
+  }
+
+  private async getLeaseLocator(
+    leaseToken: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, run_id, run_item_id, job_id, agent_id
+       from lease_locators
+       where lease_token = $1
+       limit 1`,
+      [leaseToken],
+    );
+    return result.rows[0];
+  }
+
+  private async upsertRunLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    runId: string,
+    tenantId: string,
+    projectId: string,
+  ): Promise<void> {
+    await executor.query(
+      `insert into run_locators (run_id, tenant_id, project_id)
+       values ($1, $2, $3)
+       on conflict (run_id) do update set
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [runId, tenantId, projectId],
+    );
+  }
+
+  private async upsertRunItemLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { runItemId: string; runId: string; jobId: string; tenantId: string; projectId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into run_item_locators (run_item_id, run_id, job_id, tenant_id, project_id)
+       values ($1, $2, $3, $4, $5)
+       on conflict (run_item_id) do update set
+         run_id = excluded.run_id,
+         job_id = excluded.job_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.runItemId, input.runId, input.jobId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async upsertAgentLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    agentId: string,
+    tenantId: string,
+    projectId: string | null,
+  ): Promise<void> {
+    await executor.query(
+      `insert into agent_locators (agent_id, tenant_id, project_id)
+       values ($1, $2, $3)
+       on conflict (agent_id) do update set
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [agentId, tenantId, projectId],
+    );
+  }
+
+  private async upsertLeaseLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { leaseToken: string; jobId: string; runId: string | null; runItemId: string | null; agentId: string; tenantId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into lease_locators (lease_token, job_id, run_id, run_item_id, agent_id, tenant_id)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (lease_token) do update set
+         job_id = excluded.job_id,
+         run_id = excluded.run_id,
+         run_item_id = excluded.run_item_id,
+         agent_id = excluded.agent_id,
+         tenant_id = excluded.tenant_id,
+         updated_at = now()`,
+      [input.leaseToken, input.jobId, input.runId, input.runItemId, input.agentId, input.tenantId],
+    );
+  }
+
+  private async upsertArtifactLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { artifactId: string; runId: string | null; runItemId: string | null; tenantId: string; projectId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into artifact_locators (artifact_id, run_id, run_item_id, tenant_id, project_id)
+       values ($1, $2, $3, $4, $5)
+       on conflict (artifact_id) do update set
+         run_id = excluded.run_id,
+         run_item_id = excluded.run_item_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.artifactId, input.runId, input.runItemId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async reclaimExpiredLeases(client: SqlPoolClientLike): Promise<void> {
+    const tenantIds = await this.listTenantSchemas();
+    for (const tenantId of tenantIds) {
+      const jobLeasesTable = this.tableName(tenantId, 'job_leases');
+      const runItemsTable = this.tableName(tenantId, 'run_items');
+      const runsTable = this.tableName(tenantId, 'runs');
+      const expiredResult = await client.query<ExpiredLeaseRow>(
+        `update ${jobLeasesTable}
+         set status = 'expired',
+             released_at = now()
+         where released_at is null
+           and expires_at < now()
+         returning run_id, run_item_id`,
       );
+
+      const expiredRunItemIds = expiredResult.rows
+        .map((row) => row.run_item_id)
+        .filter((value): value is string => Boolean(value));
+      if (expiredRunItemIds.length > 0) {
+        await client.query(
+          `update ${runItemsTable}
+           set status = 'pending',
+               assigned_agent_id = null,
+               lease_token = null,
+               updated_at = now()
+           where run_item_id = any($1::text[])
+             and status in ('dispatched', 'running')`,
+          [expiredRunItemIds],
+        );
+      }
+
+      const expiredRunIds = Array.from(new Set(expiredResult.rows
+        .map((row) => row.run_id)
+        .filter((value): value is string => Boolean(value))));
+      if (expiredRunIds.length > 0) {
+        await client.query(
+          `update ${runsTable}
+           set status = 'queued',
+               updated_at = now()
+           where run_id = any($1::text[])
+             and status = 'running'
+             and exists (
+               select 1
+               from ${runItemsTable}
+               where ${runItemsTable}.run_id = ${runsTable}.run_id
+                 and ${runItemsTable}.status = 'pending'
+             )`,
+          [expiredRunIds],
+        );
+      }
     }
   }
 
   private async upsertRunProjection(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
     const timestamps = toProjectionTimestamps(envelope);
+    const runsTable = this.tableName(envelope.tenant_id, 'runs');
     await client.query(
-      upsertProjectionStatusSql('runs', 'run_id'),
+      upsertProjectionStatusSql(runsTable, 'run_id'),
       [
         envelope.payload.run_id,
         envelope.tenant_id,
@@ -1696,12 +2244,14 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         envelope.event_id,
       ],
     );
+    await this.upsertRunLocator(client, envelope.payload.run_id, envelope.tenant_id, envelope.project_id);
   }
 
   private async upsertRunItemProjection(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
     const timestamps = toProjectionTimestamps(envelope);
+    const runItemsTable = this.tableName(envelope.tenant_id, 'run_items');
     await client.query(
-      `insert into run_items (
+      `insert into ${runItemsTable} (
          run_item_id,
          run_id,
          job_id,
@@ -1723,8 +2273,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
            when excluded.status = 'running' and run_items.status in ('passed', 'failed', 'canceled') then run_items.status
            else excluded.status
          end,
-         started_at = coalesce(run_items.started_at, excluded.started_at),
-         finished_at = coalesce(excluded.finished_at, run_items.finished_at),
+         started_at = coalesce(${runItemsTable}.started_at, excluded.started_at),
+         finished_at = coalesce(excluded.finished_at, ${runItemsTable}.finished_at),
          last_event_id = excluded.last_event_id,
          updated_at = now()`,
       [
@@ -1740,12 +2290,20 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         envelope.event_id,
       ],
     );
+    await this.upsertRunItemLocator(client, {
+      runItemId: envelope.payload.run_item_id,
+      runId: envelope.payload.run_id,
+      jobId: envelope.payload.job_id,
+      tenantId: envelope.tenant_id,
+      projectId: envelope.project_id,
+    });
   }
 
   private async insertStepEventProjection(client: SqlPoolClientLike, envelope: StepResultReportedEnvelope): Promise<void> {
     const stepEvent = buildStepEventValues(envelope);
+    const stepEventsTable = this.tableName(envelope.tenant_id, 'step_events');
     await client.query(
-      `insert into step_events (
+      `insert into ${stepEventsTable} (
          event_id,
          run_id,
          run_item_id,
@@ -1803,13 +2361,16 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       stepEventId: string | null;
     },
   ): Promise<void> {
+    const artifactsTable = this.tableName(context.tenantId, 'artifacts');
     for (const artifact of artifacts) {
       if (!isArtifactReference(artifact)) {
         continue;
       }
 
+      const artifactId = artifact.artifactId ?? randomUUID();
+
       await client.query(
-        `insert into artifacts (
+        `insert into ${artifactsTable} (
            artifact_id,
            tenant_id,
            project_id,
@@ -1826,7 +2387,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
            retention_expires_at
          ) values (
            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14
-         )
+        )
          on conflict (artifact_id) do update set
            storage_uri = excluded.storage_uri,
            content_type = excluded.content_type,
@@ -1835,7 +2396,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
            metadata_json = excluded.metadata_json,
            retention_expires_at = excluded.retention_expires_at`,
         [
-          artifact.artifactId ?? randomUUID(),
+          artifactId,
           context.tenantId,
           context.projectId,
           context.runId,
@@ -1851,10 +2412,30 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           resolveArtifactRetentionExpiresAt(artifact),
         ],
       );
+      await this.upsertArtifactLocator(client, {
+        artifactId,
+        runId: context.runId,
+        runItemId: context.runItemId,
+        tenantId: context.tenantId,
+        projectId: context.projectId,
+      });
     }
   }
 
   private async linkStepDecisions(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
+    const stepDecisionsTable = this.tableName(envelope.tenant_id, 'step_decisions');
+      await client.query(
+        `update ${stepDecisionsTable}
+       set run_id = coalesce(run_id, $1),
+           run_item_id = coalesce(run_item_id, $2)
+       where job_id = $3
+         and (run_id is null or run_item_id is null)`,
+      [
+        envelope.payload.run_id,
+        envelope.payload.run_item_id,
+        envelope.payload.job_id,
+      ],
+    );
     await client.query(
       `update step_decisions
        set run_id = coalesce(run_id, $1),
@@ -1870,8 +2451,10 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   private async releaseLeaseForCompletedJob(client: SqlPoolClientLike, envelope: ResultReportedEnvelope): Promise<void> {
+    const jobLeasesTable = this.tableName(envelope.tenant_id, 'job_leases');
+    const runItemsTable = this.tableName(envelope.tenant_id, 'run_items');
     await client.query(
-      `update job_leases
+      `update ${jobLeasesTable}
        set status = case
          when $2 = 'passed' then 'completed'
          when $2 = 'failed' then 'failed'
@@ -1887,7 +2470,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       ],
     );
     await client.query(
-      `update run_items
+      `update ${runItemsTable}
        set assigned_agent_id = null,
            lease_token = null,
            control_state = 'active',

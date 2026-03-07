@@ -13,6 +13,7 @@ import type {
   ControlPlaneHeartbeatLeaseInput,
   ControlPlaneJobLeaseRecord,
   ControlPlanePage,
+  ControlPlanePrincipal,
   ControlPlaneRegisterAgentInput,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
@@ -28,6 +29,7 @@ import type { StepControlRequest, StepControlResponse } from '@aiwtp/web-worker'
 import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js';
 import { PaginationError, parseLimit } from './pagination.js';
 import { createArtifactBlobStoreFromEnv, type ArtifactDownloadMode } from './artifact-blob-store.js';
+import { readBearerToken, verifyControlPlaneJwt } from './auth.js';
 
 const json = (response: ServerResponse, status: number, payload?: unknown): void => {
   if (payload === undefined) {
@@ -304,6 +306,13 @@ const toApiArtifact = (artifact: ControlPlaneArtifactRecord) => ({
   created_at: artifact.createdAt,
 });
 
+const toApiPrincipal = (principal: ControlPlanePrincipal) => ({
+  subject_id: principal.subjectId,
+  tenant_id: principal.tenantId,
+  project_ids: principal.projectIds,
+  roles: principal.roles,
+});
+
 const toApiLease = (lease: ControlPlaneJobLeaseRecord) => ({
   lease_id: lease.leaseId,
   lease_token: lease.leaseToken,
@@ -331,6 +340,29 @@ const requiredQuery = (url: URL, name: string): string => {
   }
   return value;
 };
+
+const unauthorized = (response: ServerResponse, message: string): void => {
+  json(response, 401, {
+    error: {
+      code: 'UNAUTHORIZED',
+      message,
+      trace_id: 'local',
+    },
+  });
+};
+
+const forbidden = (response: ServerResponse, code: string, message: string): void => {
+  json(response, 403, {
+    error: {
+      code,
+      message,
+      trace_id: 'local',
+    },
+  });
+};
+
+const canAccessProject = (principal: ControlPlanePrincipal, projectId: string): boolean =>
+  principal.projectIds.includes(projectId);
 
 const notSupported = (response: ServerResponse, capability: string): void => {
   json(response, 501, {
@@ -373,6 +405,27 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
   const store = options.store ?? (await createControlPlaneStoreFromEnv());
   const hostname = options.hostname ?? '127.0.0.1';
   const artifactBlobStore = createArtifactBlobStoreFromEnv();
+  const authenticatePrincipal = async (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<ControlPlanePrincipal | undefined> => {
+    if (!store.resolvePrincipal) {
+      notSupported(response, 'token-backed principal resolution');
+      return undefined;
+    }
+
+    try {
+      const token = readBearerToken(request.headers.authorization);
+      const actor = verifyControlPlaneJwt(token);
+      return await store.resolvePrincipal({
+        subjectId: actor.subjectId,
+        tenantId: actor.tenantId,
+      });
+    } catch (error) {
+      unauthorized(response, error instanceof Error ? error.message : 'authentication failed');
+      return undefined;
+    }
+  };
 
   const server = http.createServer(async (request, response) => {
     try {
@@ -393,6 +446,16 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
             applied_at: migration.appliedAt,
           })),
         });
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/v1/me') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
+        json(response, 200, toApiPrincipal(principal));
         return;
       }
 
@@ -534,9 +597,25 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
       }
 
       if (method === 'GET' && pathname === '/api/v1/runs') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
+        const tenantId = requiredQuery(url, 'tenant_id');
+        const projectId = requiredQuery(url, 'project_id');
+        if (tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'project_id is not granted to the principal');
+          return;
+        }
+
         const page = await store.listRuns({
-          tenantId: requiredQuery(url, 'tenant_id'),
-          projectId: requiredQuery(url, 'project_id'),
+          tenantId,
+          projectId,
           limit: parseLimit(url.searchParams.get('limit'), 50, 200),
           cursor: url.searchParams.get('cursor') ?? undefined,
         });
@@ -545,8 +624,28 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
       }
 
       if (method === 'GET' && pathname === '/api/v1/run-items') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
+        const runId = requiredQuery(url, 'run_id');
+        const run = await store.getRun(runId);
+        if (!run) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+        if (run.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'run tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, run.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'run project_id is not granted to the principal');
+          return;
+        }
+
         const page = await store.listRunItems({
-          runId: requiredQuery(url, 'run_id'),
+          runId,
           limit: parseLimit(url.searchParams.get('limit'), 200, 500),
           cursor: url.searchParams.get('cursor') ?? undefined,
         });
@@ -592,12 +691,31 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
 
       const cancelRunMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+):cancel$/);
       if (method === 'POST' && cancelRunMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
         if (!store.cancelRun) {
           notSupported(response, 'cancel run');
           return;
         }
 
         const [, runId] = cancelRunMatch;
+        const existingRun = await store.getRun(runId);
+        if (!existingRun) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+        if (existingRun.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'run tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, existingRun.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'run project_id is not granted to the principal');
+          return;
+        }
+
         const run = await store.cancelRun(runId);
         if (!run) {
           json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
@@ -630,7 +748,9 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         }
 
         const decision = store.resolveStepControlDecision
-          ? await store.resolveStepControlDecision(jobId, body.run_id, body.run_item_id, sourceStepId)
+          ? await store.resolveStepControlDecision(jobId, body.run_id, body.run_item_id, sourceStepId, {
+            tenantId: body.tenant_id,
+          })
           : await store.dequeueStepDecision(jobId, sourceStepId);
         if (!decision) {
           json(response, 204);
@@ -650,7 +770,11 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
 
-        await store.enqueueStepDecision(jobId, sourceStepId, buildDecision(body));
+        await store.enqueueStepDecision(jobId, sourceStepId, buildDecision(body), {
+          tenantId: typeof body.tenant_id === 'string' ? body.tenant_id : undefined,
+          runId: typeof body.run_id === 'string' ? body.run_id : undefined,
+          runItemId: typeof body.run_item_id === 'string' ? body.run_item_id : undefined,
+        });
         json(response, 202, { accepted: true });
         return;
       }
@@ -740,10 +864,23 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
 
       const runMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+)$/);
       if (method === 'GET' && runMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
         const [, runId] = runMatch;
         const run = await store.getRun(runId);
         if (!run) {
           json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+        if (run.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'run tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, run.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'run project_id is not granted to the principal');
           return;
         }
         json(response, 200, toApiRun(run));
@@ -752,10 +889,23 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
 
       const runItemMatch = matchPath(pathname, /^\/api\/v1\/run-items\/([^/]+)$/);
       if (method === 'GET' && runItemMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
         const [, runItemId] = runItemMatch;
         const runItem = await store.getRunItem(runItemId);
         if (!runItem) {
           json(response, 404, { error: { code: 'NOT_FOUND', message: 'run item not found', trace_id: 'local' } });
+          return;
+        }
+        if (runItem.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'run item tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, runItem.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'run item project_id is not granted to the principal');
           return;
         }
         json(response, 200, toApiRunItem(runItem));

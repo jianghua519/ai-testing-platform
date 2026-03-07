@@ -69,3 +69,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-133052-cancel-pause-resume-artifact-project-task.md` - 并发槽位、cancel/pause/resume 与 artifact 真采集闭环
 
 - `2026-03-07`: `docs/project/tasks/20260307-150657-artifact-object-storage-retention-project-task.md` - artifact 对象存储、下载与保留策略
+
+- `2026-03-07`: `docs/project/tasks/20260307-173247-control-plane-tenant-schema-token-project-task.md` - control-plane tenant schema隔离与token租户上下文

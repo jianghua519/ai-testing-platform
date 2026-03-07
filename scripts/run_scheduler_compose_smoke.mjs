@@ -18,6 +18,7 @@ import {
   WebJobRunner,
   createWebWorkerJobFixture,
 } from '../apps/web-worker/dist/index.js';
+import { buildTenantTable, createAuthHeaders, seedProjectMemberships } from './lib/control_plane_auth.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const execFile = promisify(execFileCallback);
@@ -58,10 +59,10 @@ const artifactS3Client = artifactStorageMode === 's3'
 
 const pool = new Pool({ connectionString });
 
-const postJson = async (pathname, payload = {}) => {
+const postJson = async (pathname, payload = {}, headers = {}) => {
   const response = await fetch(new URL(pathname, baseUrl), {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(payload),
   });
   const text = await response.text();
@@ -71,8 +72,8 @@ const postJson = async (pathname, payload = {}) => {
   };
 };
 
-const getJson = async (pathname) => {
-  const response = await fetch(new URL(pathname, baseUrl));
+const getJson = async (pathname, headers = {}) => {
+  const response = await fetch(new URL(pathname, baseUrl), { headers });
   const text = await response.text();
   return {
     status: response.status,
@@ -471,6 +472,13 @@ const targetServer = await startTargetServer();
 
 try {
   const fixture = createWebWorkerJobFixture();
+  const subjectId = '11111111-2222-3333-4444-555555555555';
+  const authHeaders = createAuthHeaders({ subjectId, tenantId: fixture.tenantId });
+  const agentsTable = buildTenantTable(fixture.tenantId, 'agents');
+  const jobLeasesTable = buildTenantTable(fixture.tenantId, 'job_leases');
+  const runsTable = buildTenantTable(fixture.tenantId, 'runs');
+  const runItemsTable = buildTenantTable(fixture.tenantId, 'run_items');
+  const artifactsTable = buildTenantTable(fixture.tenantId, 'artifacts');
   const agentClient = new HttpAgentControlPlaneClient({ baseUrl, timeoutMs: 5000 });
   const runner = new WebJobRunner(
     new DefaultDslCompiler(),
@@ -536,6 +544,12 @@ try {
     },
   ];
 
+  await seedProjectMemberships(pool, {
+    tenantId: fixture.tenantId,
+    subjectId,
+    memberships: [{ projectId: fixture.projectId, roles: ['qa', 'operator'] }],
+  });
+
   const enqueueResponses = await Promise.all(enqueuePayloads.map((payload) => postJson('/api/v1/internal/runs:enqueue-web', payload)));
   enqueueResponses.forEach((response, index) => {
     assertOk(response.status === 201, `enqueue ${index} expected 201, got ${response.status}`);
@@ -566,7 +580,7 @@ try {
   const observedActiveLeases = await waitFor(async () => {
     const result = await pool.query(
       `select count(*)::int as active_count
-       from job_leases
+       from ${jobLeasesTable}
        where job_id = any($1::text[])
          and released_at is null`,
       [queuedJobIds],
@@ -587,13 +601,13 @@ try {
 
   const pauseResponse = await postJson(`/api/v1/internal/runs/${runOneRunId}:pause`);
   const pausedRunItemState = await waitFor(async () => {
-    const result = await pool.query('select control_state from run_items where run_item_id = $1', [runOneRunItemId]);
+    const result = await pool.query(`select control_state from ${runItemsTable} where run_item_id = $1`, [runOneRunItemId]);
     return result.rows[0]?.control_state === 'paused' ? result.rows[0].control_state : false;
   }, { timeoutMs: 60000, label: 'run one paused state' });
   await sleep(500);
   const resumeResponse = await postJson(`/api/v1/internal/runs/${runOneRunId}:resume`);
   const resumedRunItemState = await waitFor(async () => {
-    const result = await pool.query('select control_state from run_items where run_item_id = $1', [runOneRunItemId]);
+    const result = await pool.query(`select control_state from ${runItemsTable} where run_item_id = $1`, [runOneRunItemId]);
     return result.rows[0]?.control_state === 'active' ? result.rows[0].control_state : false;
   }, { timeoutMs: 60000, label: 'run one resumed state' });
 
@@ -602,7 +616,7 @@ try {
     return collectStepIds(payload.body).some((value) => value === 'assert-profile-form-visible:passed') ? payload.body : false;
   }, { timeoutMs: 60000, label: 'run three profile assertion step event' });
 
-  const cancelResponse = await postJson(`/api/v1/runs/${runThreeRunId}:cancel`);
+  const cancelResponse = await postJson(`/api/v1/runs/${runThreeRunId}:cancel`, {}, authHeaders);
 
   const cycleResults = await chromiumRunPromise;
   const executedCycles = cycleResults.filter((cycle) => cycle.status === 'executed');
@@ -610,8 +624,8 @@ try {
 
   const [health, runsPage, firstRunItemsPage] = await Promise.all([
     getJson('/healthz'),
-    getJson(`/api/v1/runs?tenant_id=${fixture.tenantId}&project_id=${fixture.projectId}&limit=20`),
-    getJson(`/api/v1/run-items?run_id=${enqueueResponses[0].body.run.id}&limit=20`),
+    getJson(`/api/v1/runs?tenant_id=${fixture.tenantId}&project_id=${fixture.projectId}&limit=20`, authHeaders),
+    getJson(`/api/v1/run-items?run_id=${enqueueResponses[0].body.run.id}&limit=20`, authHeaders),
   ]);
   const stepEventsByRun = await Promise.all(
     enqueueResponses.map((response) => getJson(`/api/v1/internal/runs/${response.body.run.id}/step-events?limit=50`)),
@@ -630,28 +644,28 @@ try {
   const [agentRows, leaseRows, runRows, runItemRows] = await Promise.all([
     pool.query(
       `select agent_id, status, capabilities_json, max_parallel_slots, last_heartbeat_at
-       from agents
+       from ${agentsTable}
        where agent_id = any($1::text[])
        order by agent_id asc`,
       [schedulerAgentIds],
     ),
     pool.query(
       `select lease_token, status, released_at, heartbeat_at
-       from job_leases
+       from ${jobLeasesTable}
        where job_id = any($1::text[])
        order by lease_id asc`,
       [queuedJobIds],
     ),
     pool.query(
       `select run_id, status
-       from runs
+       from ${runsTable}
        where run_id = any($1::text[])
        order by created_at asc, run_id asc`,
       [queuedRunIds],
     ),
     pool.query(
       `select run_item_id, status, required_capabilities_json, assigned_agent_id, lease_token, control_state
-       from run_items
+       from ${runItemsTable}
        where run_item_id = any($1::text[])
        order by created_at asc, run_item_id asc`,
       [queuedRunItemIds],
@@ -718,7 +732,7 @@ try {
   const streamDownloadBytes = Buffer.from(await streamDownloadResponse.arrayBuffer());
 
   await pool.query(
-    `update artifacts
+    `update ${artifactsTable}
      set retention_expires_at = now() - interval '1 minute'
      where artifact_id = $1`,
     [downloadableArtifact.artifact_id],
@@ -737,7 +751,7 @@ try {
 
   const prunedArtifactRecord = await pool.query(
     `select artifact_id
-     from artifacts
+     from ${artifactsTable}
      where artifact_id = $1`,
     [downloadableArtifact.artifact_id],
   );

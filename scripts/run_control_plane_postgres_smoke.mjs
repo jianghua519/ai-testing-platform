@@ -8,23 +8,29 @@ import {
   createWebWorkerJobFixture,
 } from '../apps/web-worker/dist/index.js';
 import { DefaultDslCompiler } from '../packages/dsl-compiler/dist/index.js';
+import { buildTenantTable } from './lib/control_plane_auth.mjs';
 
 const readDomainSummary = async (pool, fixture) => {
+  const runsTable = buildTenantTable(fixture.tenantId, 'runs');
+  const runItemsTable = buildTenantTable(fixture.tenantId, 'run_items');
+  const stepEventsTable = buildTenantTable(fixture.tenantId, 'step_events');
+  const stepDecisionsTable = buildTenantTable(fixture.tenantId, 'step_decisions');
+  const runnerEventsTable = buildTenantTable(fixture.tenantId, 'control_plane_runner_events');
   const [runs, runItems, stepEvents, stepDecisions, rawEvents] = await Promise.all([
-    pool.query('select run_id, status, last_event_id from runs where run_id = $1', [fixture.runId]),
-    pool.query('select run_item_id, status, last_event_id from run_items where run_item_id = $1', [fixture.runItemId]),
-    pool.query('select source_step_id, status from step_events where run_item_id = $1 order by received_at asc', [fixture.runItemId]),
+    pool.query(`select run_id, status, last_event_id from ${runsTable} where run_id = $1`, [fixture.runId]),
+    pool.query(`select run_item_id, status, last_event_id from ${runItemsTable} where run_item_id = $1`, [fixture.runItemId]),
+    pool.query(`select source_step_id, status from ${stepEventsTable} where run_item_id = $1 order by received_at asc`, [fixture.runItemId]),
     pool.query(
       `select
          count(*)::int as total_count,
          sum(case when consumed_at is not null then 1 else 0 end)::int as consumed_count,
          min(run_id) as run_id,
          min(run_item_id) as run_item_id
-       from step_decisions
+       from ${stepDecisionsTable}
        where job_id = $1`,
       [fixture.jobId],
     ),
-    pool.query('select count(*)::int as total_count from control_plane_runner_events where job_id = $1', [fixture.jobId]),
+    pool.query(`select count(*)::int as total_count from ${runnerEventsTable} where job_id = $1`, [fixture.jobId]),
   ]);
 
   return {
@@ -123,8 +129,14 @@ const main = async () => {
       body: JSON.stringify({
         action: 'replace',
         replacement_step: replacementStep,
+        tenant_id: fixture.tenantId,
+        run_id: fixture.runId,
+        run_item_id: fixture.runItemId,
       }),
     });
+    if (enqueueResponse.status !== 202) {
+      throw new Error(`override expected 202, got ${enqueueResponse.status}: ${await enqueueResponse.text()}`);
+    }
 
     const decisionResponse = await fetch(`${firstServer.baseUrl}/api/v1/agent/jobs/${fixture.jobId}/steps/${replacementStep.sourceStepId}:decide`, {
       method: 'POST',
@@ -145,6 +157,9 @@ const main = async () => {
         compiled_step: replacementStep,
       }),
     });
+    if (decisionResponse.status !== 200) {
+      throw new Error(`decide expected 200, got ${decisionResponse.status}: ${await decisionResponse.text()}`);
+    }
     const decisionPayload = await decisionResponse.json();
 
     const firstPost = await fetch(`${firstServer.baseUrl}/api/v1/internal/runner-results`, {

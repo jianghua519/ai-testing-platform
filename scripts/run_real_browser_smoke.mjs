@@ -401,6 +401,9 @@ const main = async () => {
         body: JSON.stringify({
           action: 'replace',
           replacement_step: createReplacementAssertStep(),
+          tenant_id: fixture.tenantId,
+          run_id: fixture.runId,
+          run_item_id: fixture.runItemId,
         }),
       });
 

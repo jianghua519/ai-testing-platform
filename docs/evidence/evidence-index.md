@@ -65,3 +65,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-133052-cancel-pause-resume-artifact-evidence.md` - 并发槽位、cancel/pause/resume 与 artifact 真采集闭环 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-150657-artifact-object-storage-retention-evidence.md` - artifact 对象存储、下载与保留策略 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-173247-control-plane-tenant-schema-token-evidence.md` - control-plane tenant schema隔离与token租户上下文 的测试举证记录。

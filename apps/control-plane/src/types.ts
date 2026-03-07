@@ -25,6 +25,9 @@ export interface StepOverrideRequest {
   reason?: string;
   replacement_step?: CompiledStep;
   resume_after_ms?: number;
+  tenant_id?: string;
+  run_id?: string;
+  run_item_id?: string;
 }
 
 export interface ControlPlaneServer {
@@ -188,6 +191,24 @@ export interface ControlPlaneListExpiredArtifactsQuery {
   expiresBefore?: string;
 }
 
+export interface ControlPlaneAuthenticatedActor {
+  subjectId: string;
+  tenantId: string;
+}
+
+export interface ControlPlanePrincipalProjectGrant {
+  projectId: string;
+  roles: string[];
+}
+
+export interface ControlPlanePrincipal {
+  subjectId: string;
+  tenantId: string;
+  projectIds: string[];
+  roles: string[];
+  projectGrants: ControlPlanePrincipalProjectGrant[];
+}
+
 export interface ControlPlaneEnqueueWebRunInput {
   tenantId: string;
   projectId: string;
@@ -261,9 +282,15 @@ export interface ControlPlaneSchedulingStore {
 }
 
 export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> {
+  resolvePrincipal?(actor: ControlPlaneAuthenticatedActor): Promise<ControlPlanePrincipal>;
   recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult>;
   listJobEvents(jobId: string): Promise<RecordedRunnerEvent[]>;
-  enqueueStepDecision(jobId: string, sourceStepId: string, decision: StepControlResponse): Promise<void>;
+  enqueueStepDecision(
+    jobId: string,
+    sourceStepId: string,
+    decision: StepControlResponse,
+    context?: { tenantId?: string; runId?: string; runItemId?: string },
+  ): Promise<void>;
   dequeueStepDecision(jobId: string, sourceStepId: string): Promise<StepControlResponse | undefined>;
   listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]>;
   getRun(runId: string): Promise<ControlPlaneRunRecord | undefined>;
@@ -282,6 +309,7 @@ export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> 
     runId: string,
     runItemId: string,
     sourceStepId: string,
+    context?: { tenantId?: string },
   ): Promise<StepControlResponse | undefined>;
   snapshot(): Promise<ControlPlaneStateSnapshot>;
   close?(): Promise<void>;

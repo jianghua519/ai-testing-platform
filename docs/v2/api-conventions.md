@@ -2,7 +2,7 @@
 title: V2 API Conventions
 status: active
 owner: architecture
-last_updated: 2026-03-06
+last_updated: 2026-03-07
 summary: Normative REST API conventions for versioning, headers, errors, pagination, and idempotency.
 ---
 
@@ -23,7 +23,8 @@ All authenticated requests:
 
 Tenant scoping:
 
-- Prefer token claims as the source of truth.
+- Prefer stable identity claims from the token as the source of truth for `subject_id` and `tenant_id`.
+- Project selection and role checks may be resolved from the server-side authorization store when those grants are mutable.
 - If explicit headers are used, they must match token claims:
   - `X-Tenant-Id: <uuid>`
   - `X-Project-Id: <uuid>`
