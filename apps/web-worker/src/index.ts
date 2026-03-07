@@ -9,4 +9,7 @@ export * from './reporting/step-result-observer.js';
 export * from './session/browser-launcher.js';
 export * from './session/session-manager.js';
 export * from './bootstrap/create-worker.js';
+export * from './control/types.js';
+export * from './control/http-step-controller.js';
+export * from './control/create-controller.js';
 export * from './testing/fixture.js';

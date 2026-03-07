@@ -15,6 +15,7 @@ tags:
   - name: RunItems
   - name: Reports
   - name: IAM
+  - name: Agents
 paths:
   /healthz:
     get:
@@ -180,6 +181,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RunItem"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/agent/jobs/{job_id}/steps/{source_step_id}:decide:
+    post:
+      tags: [Agents]
+      summary: Resolve remote control decision for the next step
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: path
+          name: source_step_id
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerStepControlRequest"
+      responses:
+        "200":
+          description: Control decision returned
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkerStepControlDecision"
+        "204":
+          description: No control override, execute original step
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -475,3 +511,49 @@ components:
               format: { type: string }
               object_key: { type: string }
               download_url: { type: string }
+    WorkerCompiledStep:
+      type: object
+      description: Compiled step payload sent from worker to control plane for runtime decision.
+      additionalProperties: true
+    WorkerStepControlRequest:
+      type: object
+      required:
+        - job_id
+        - run_id
+        - run_item_id
+        - attempt_no
+        - tenant_id
+        - project_id
+        - trace_id
+        - compiled_step_id
+        - source_step_id
+        - step_name
+        - compiled_step
+      properties:
+        job_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        attempt_no: { type: integer, minimum: 0 }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        trace_id: { type: string, minLength: 1 }
+        correlation_id: { type: string }
+        compiled_step_id: { type: string, minLength: 1 }
+        source_step_id: { type: string, minLength: 1 }
+        step_name: { type: string, minLength: 1 }
+        page_url: { type: string }
+        compiled_step:
+          $ref: "#/components/schemas/WorkerCompiledStep"
+    WorkerStepControlDecision:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [execute, skip, replace, pause]
+        reason: { type: string }
+        replacement_step:
+          $ref: "#/components/schemas/WorkerCompiledStep"
+        resume_after_ms:
+          type: integer
+          minimum: 0

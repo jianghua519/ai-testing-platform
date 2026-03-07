@@ -6,6 +6,7 @@ import type { ResultPublisher } from '../reporting/types.js';
 import type { BrowserLauncher } from '../session/browser-launcher.js';
 import { openExecutionSession } from '../session/session-manager.js';
 import { PublishingStepObserver } from '../reporting/step-result-observer.js';
+import type { StepControllerFactory, StepControllerProvider } from '../control/types.js';
 
 const buildMetadata = (job: WebWorkerJob): JobMetadata => ({
   jobId: job.jobId,
@@ -18,17 +19,33 @@ const buildMetadata = (job: WebWorkerJob): JobMetadata => ({
   correlationId: job.correlationId,
 });
 
+const isControllerFactory = (
+  provider?: StepControllerProvider,
+): provider is StepControllerFactory => Boolean(provider && typeof provider === 'object' && 'create' in provider && typeof provider.create === 'function');
+
+const resolveController = (
+  provider: StepControllerProvider | undefined,
+  metadata: JobMetadata,
+): StepExecutionController | undefined => {
+  if (!provider) {
+    return undefined;
+  }
+
+  return isControllerFactory(provider) ? provider.create(metadata) : provider;
+};
+
 export class WebJobRunner {
   constructor(
     private readonly compiler = new DefaultDslCompiler(),
     private readonly adapter = new RegistryBasedPlaywrightAdapter(),
     private readonly publisher: ResultPublisher,
     private readonly browserLauncher: BrowserLauncher,
-    private readonly controller?: StepExecutionController,
+    private readonly controllerProvider?: StepControllerProvider,
   ) {}
 
   async run(job: WebWorkerJob): Promise<WebWorkerResult> {
     const metadata = buildMetadata(job);
+    const controller = resolveController(this.controllerProvider, metadata);
     const compileResponse: CompileResponse = await this.compiler.compile({
       sourcePlan: job.plan,
       envProfile: job.envProfile,
@@ -48,7 +65,7 @@ export class WebJobRunner {
     const browser = await this.browserLauncher.launch(compileResponse.compiledPlan.browserProfile);
     try {
       const session = await openExecutionSession(browser, compileResponse.compiledPlan, {
-        controller: this.controller,
+        controller,
         observer: new PublishingStepObserver(metadata, this.publisher),
       });
       try {

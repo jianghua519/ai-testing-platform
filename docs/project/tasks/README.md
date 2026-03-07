@@ -41,3 +41,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-084405-web-worker-http-publisher-project-task.md` - web-worker 结果回传协议与 HTTP publisher
 
 - `2026-03-07`: `docs/project/tasks/20260307-085850-step-project-task.md` - step级执行控制与回传
+
+- `2026-03-07`: `docs/project/tasks/20260307-091146-step-project-task.md` - 远程step控制协议
