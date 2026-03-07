@@ -2,7 +2,7 @@
 title: 任务设计说明索引
 status: active
 owner: architecture
-last_updated: 2026-03-07
+last_updated: 2026-03-08
 summary: 任务级设计说明文档的存放位置和索引规则。
 ---
 
@@ -79,3 +79,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-221500-recording-capability-gap-design-task.md` - 录屏到报告能力调研与 GAP 分析
 
 - `2026-03-07`: `docs/design/tasks/20260307-235950-langgraph-ai-orchestrator-design-task.md` - LangGraph 驱动的 AI 测试编排与对话助手设计
+
+- `2026-03-08`: `docs/design/tasks/20260308-081533-platform-workbench-ui-ux-design-task.md` - 通用测试平台工作台 UI/UX 设计
