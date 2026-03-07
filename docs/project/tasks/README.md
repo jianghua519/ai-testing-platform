@@ -73,3 +73,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-173247-control-plane-tenant-schema-token-project-task.md` - control-plane tenant schema隔离与token租户上下文
 
 - `2026-03-07`: `docs/project/tasks/20260307-191725-control-plane-post-api-v1-runs-project-task.md` - control-plane 公开 POST /api/v1/runs
+
+- `2026-03-07`: `docs/project/tasks/20260307-221500-recording-capability-gap-project-task.md` - 录屏到报告能力调研与 GAP 分析
