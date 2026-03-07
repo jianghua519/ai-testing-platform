@@ -53,3 +53,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-095018-smoke-run-project-task.md` - 真实浏览器交互 smoke run 扩展
 
 - `2026-03-07`: `docs/project/tasks/20260307-100206-control-plane-postgresql-project-task.md` - control-plane PostgreSQL持久化骨架
+
+- `2026-03-07`: `docs/project/tasks/20260307-101158-control-plane-project-task.md` - control-plane领域模型表扩展

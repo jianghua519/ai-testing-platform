@@ -9,6 +9,39 @@ import {
 } from '../apps/web-worker/dist/index.js';
 import { DefaultDslCompiler } from '../packages/dsl-compiler/dist/index.js';
 
+const readDomainSummary = async (pool, fixture) => {
+  const [runs, runItems, stepEvents, stepDecisions, rawEvents] = await Promise.all([
+    pool.query('select run_id, status, last_event_id from runs where run_id = $1', [fixture.runId]),
+    pool.query('select run_item_id, status, last_event_id from run_items where run_item_id = $1', [fixture.runItemId]),
+    pool.query('select source_step_id, status from step_events where run_item_id = $1 order by received_at asc', [fixture.runItemId]),
+    pool.query(
+      `select
+         count(*)::int as total_count,
+         sum(case when consumed_at is not null then 1 else 0 end)::int as consumed_count,
+         min(run_id) as run_id,
+         min(run_item_id) as run_item_id
+       from step_decisions
+       where job_id = $1`,
+      [fixture.jobId],
+    ),
+    pool.query('select count(*)::int as total_count from control_plane_runner_events where job_id = $1', [fixture.jobId]),
+  ]);
+
+  return {
+    runStatus: runs.rows[0]?.status ?? null,
+    runLastEventId: runs.rows[0]?.last_event_id ?? null,
+    runItemStatus: runItems.rows[0]?.status ?? null,
+    runItemLastEventId: runItems.rows[0]?.last_event_id ?? null,
+    stepEventCount: stepEvents.rows.length,
+    stepEventStepIds: stepEvents.rows.map((row) => row.source_step_id),
+    stepDecisionTotal: stepDecisions.rows[0]?.total_count ?? 0,
+    stepDecisionConsumed: stepDecisions.rows[0]?.consumed_count ?? 0,
+    stepDecisionRunId: stepDecisions.rows[0]?.run_id ?? null,
+    stepDecisionRunItemId: stepDecisions.rows[0]?.run_item_id ?? null,
+    rawEventCount: rawEvents.rows[0]?.total_count ?? 0,
+  };
+};
+
 const main = async () => {
   const database = newDb();
   const { Pool } = database.adapters.createPg();
@@ -130,6 +163,7 @@ const main = async () => {
     });
 
     const eventsPayload = await fetch(`${firstServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/events`).then((response) => response.json());
+    const domainSummary = await readDomainSummary(firstPool, fixture);
 
     await firstServer.close();
     firstServerClosed = true;
@@ -139,6 +173,7 @@ const main = async () => {
     secondServer = await startControlPlaneServer({ store: secondStore });
 
     const restoredEventsPayload = await fetch(`${secondServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/events`).then((response) => response.json());
+    const restoredDomainSummary = await readDomainSummary(secondPool, fixture);
     const snapshot = await secondStore.snapshot();
 
     console.log(JSON.stringify({
@@ -151,7 +186,9 @@ const main = async () => {
       duplicateBody: await duplicatePost.json(),
       jobPostStatus: jobPost.status,
       eventTypes: eventsPayload.items.map((item) => item.envelope.event_type),
+      domainSummary,
       restoredEventCount: restoredEventsPayload.items.length,
+      restoredDomainSummary,
       snapshotJobIds: Object.keys(snapshot.eventsByJob),
       pendingDecisionCount: Object.values(snapshot.pendingDecisionsByJob)
         .reduce((count, byStep) => count + Object.values(byStep).reduce((inner, queue) => inner + queue.length, 0), 0),

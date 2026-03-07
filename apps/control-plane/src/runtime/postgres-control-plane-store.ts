@@ -7,7 +7,12 @@ import type {
   RunnerResultEnvelope,
 } from '../types.js';
 import type { CompiledStep } from '@aiwtp/web-dsl-schema';
-import type { StepControlResponse } from '@aiwtp/web-worker';
+import type {
+  ResultReportedEnvelope,
+  StepResultPayload,
+  StepResultReportedEnvelope,
+  StepControlResponse,
+} from '@aiwtp/web-worker';
 import { CONTROL_PLANE_POSTGRES_SCHEMA_SQL } from './postgres-schema.js';
 
 interface SqlQueryResult<Row> {
@@ -49,6 +54,21 @@ interface SnapshotDecisionRow {
   resume_after_ms: number | null;
 }
 
+interface RunRow {
+  run_id: string;
+  status: string;
+}
+
+interface RunItemRow {
+  run_item_id: string;
+  status: string;
+}
+
+interface StepDecisionLookupRow {
+  run_id: string;
+  run_item_id: string;
+}
+
 export interface PostgresControlPlaneStoreOptions {
   connectionString?: string;
   pool?: SqlPoolLike;
@@ -62,6 +82,12 @@ const parseJsonColumn = <T>(value: T | string | null): T | null => {
 
   return typeof value === 'string' ? JSON.parse(value) as T : value;
 };
+
+const isStepResultEnvelope = (envelope: RunnerResultEnvelope): envelope is StepResultReportedEnvelope =>
+  envelope.event_type === 'step.result_reported';
+
+const isJobResultEnvelope = (envelope: RunnerResultEnvelope): envelope is ResultReportedEnvelope =>
+  envelope.event_type === 'job.result_reported';
 
 const buildStepDecision = (row: StepDecisionRow | SnapshotDecisionRow): StepControlResponse => ({
   action: row.action,
@@ -81,10 +107,75 @@ const toRunnerEventFields = (envelope: RunnerResultEnvelope) => ({
   runId: envelope.payload.run_id,
   runItemId: envelope.payload.run_item_id,
   attemptNo: envelope.payload.attempt_no,
-  sourceStepId: envelope.event_type === 'step.result_reported' ? envelope.payload.source_step_id : null,
+  sourceStepId: isStepResultEnvelope(envelope) ? envelope.payload.source_step_id : null,
   status: envelope.payload.status,
   envelopeJson: JSON.stringify(envelope),
 });
+
+const toProjectionStatus = (envelope: RunnerResultEnvelope): string => {
+  if (isJobResultEnvelope(envelope)) {
+    return envelope.payload.status;
+  }
+  return 'running';
+};
+
+const toProjectionTimestamps = (envelope: RunnerResultEnvelope): { startedAt: string | null; finishedAt: string | null } => {
+  if (isJobResultEnvelope(envelope)) {
+    return {
+      startedAt: envelope.payload.started_at ?? null,
+      finishedAt: envelope.payload.finished_at ?? null,
+    };
+  }
+
+  return {
+    startedAt: envelope.payload.started_at,
+    finishedAt: null,
+  };
+};
+
+const buildStepEventValues = (envelope: StepResultReportedEnvelope) => ({
+  eventId: envelope.event_id,
+  tenantId: envelope.tenant_id,
+  projectId: envelope.project_id,
+  jobId: envelope.payload.job_id,
+  runId: envelope.payload.run_id,
+  runItemId: envelope.payload.run_item_id,
+  attemptNo: envelope.payload.attempt_no,
+  compiledStepId: envelope.payload.compiled_step_id,
+  sourceStepId: envelope.payload.source_step_id,
+  status: envelope.payload.status,
+  startedAt: envelope.payload.started_at,
+  finishedAt: envelope.payload.finished_at,
+  durationMs: envelope.payload.duration_ms,
+  errorCode: envelope.payload.error?.code ?? null,
+  errorMessage: envelope.payload.error?.message ?? null,
+  artifactsJson: JSON.stringify(envelope.payload.artifacts ?? []),
+  extractedVariablesJson: JSON.stringify(envelope.payload.extracted_variables ?? []),
+  envelopeJson: JSON.stringify(envelope),
+});
+
+const upsertProjectionStatusSql = (tableName: 'runs' | 'run_items', keyField: 'run_id' | 'run_item_id') => `
+  insert into ${tableName} (
+    ${keyField},
+    tenant_id,
+    project_id,
+    status,
+    started_at,
+    finished_at,
+    last_event_id
+  ) values ($1, $2, $3, $4, $5, $6, $7)
+  on conflict (${keyField}) do update set
+    tenant_id = excluded.tenant_id,
+    project_id = excluded.project_id,
+    status = case
+      when excluded.status = 'running' and ${tableName}.status in ('passed', 'failed', 'canceled') then ${tableName}.status
+      else excluded.status
+    end,
+    started_at = coalesce(${tableName}.started_at, excluded.started_at),
+    finished_at = coalesce(excluded.finished_at, ${tableName}.finished_at),
+    last_event_id = excluded.last_event_id,
+    updated_at = now()
+`;
 
 export class PostgresControlPlaneStore implements ControlPlaneStore {
   private constructor(
@@ -102,49 +193,68 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult> {
-    const event = toRunnerEventFields(envelope);
+    const client = await this.pool.connect();
     try {
-      await this.pool.query(
-        `insert into control_plane_runner_events (
-           event_id,
-           event_type,
-           tenant_id,
-           project_id,
-           trace_id,
-           correlation_id,
-           job_id,
-           run_id,
-           run_item_id,
-           attempt_no,
-           source_step_id,
-           status,
-           envelope_json
-         ) values (
-           $1, $2, $3, $4, $5, $6,
-           $7, $8, $9, $10, $11, $12, $13::jsonb
-         )`,
-        [
-          event.eventId,
-          event.eventType,
-          event.tenantId,
-          event.projectId,
-          event.traceId,
-          event.correlationId,
-          event.jobId,
-          event.runId,
-          event.runItemId,
-          event.attemptNo,
-          event.sourceStepId,
-          event.status,
-          event.envelopeJson,
-        ],
-      );
+      await client.query('begin');
+      const event = toRunnerEventFields(envelope);
+      try {
+        await client.query(
+          `insert into control_plane_runner_events (
+             event_id,
+             event_type,
+             tenant_id,
+             project_id,
+             trace_id,
+             correlation_id,
+             job_id,
+             run_id,
+             run_item_id,
+             attempt_no,
+             source_step_id,
+             status,
+             envelope_json
+           ) values (
+             $1, $2, $3, $4, $5, $6,
+             $7, $8, $9, $10, $11, $12, $13::jsonb
+           )`,
+          [
+            event.eventId,
+            event.eventType,
+            event.tenantId,
+            event.projectId,
+            event.traceId,
+            event.correlationId,
+            event.jobId,
+            event.runId,
+            event.runItemId,
+            event.attemptNo,
+            event.sourceStepId,
+            event.status,
+            event.envelopeJson,
+          ],
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code === '23505') {
+          await client.query('rollback');
+          return { duplicate: true };
+        }
+        throw error;
+      }
+
+      await this.upsertRunProjection(client, envelope);
+      await this.upsertRunItemProjection(client, envelope);
+      await this.linkStepDecisions(client, envelope);
+      if (isStepResultEnvelope(envelope)) {
+        await this.insertStepEventProjection(client, envelope);
+      }
+
+      await client.query('commit');
       return { duplicate: false };
     } catch (error) {
-      if ((error as { code?: string }).code === '23505') {
-        return { duplicate: true };
-      }
+      await client.query('rollback');
       throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -164,17 +274,30 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async enqueueStepDecision(jobId: string, sourceStepId: string, decision: StepControlResponse): Promise<void> {
+    const lookup = await this.pool.query<StepDecisionLookupRow>(
+      `select run_id, run_item_id
+       from run_items
+       where job_id = $1
+       limit 1`,
+      [jobId],
+    );
+    const related = lookup.rows[0];
+
     await this.pool.query(
-      `insert into control_plane_step_decisions (
+      `insert into step_decisions (
          job_id,
+         run_id,
+         run_item_id,
          source_step_id,
          action,
          reason,
          replacement_step_json,
          resume_after_ms
-       ) values ($1, $2, $3, $4, $5::jsonb, $6)`,
+       ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
       [
         jobId,
+        related?.run_id ?? null,
+        related?.run_item_id ?? null,
         sourceStepId,
         decision.action,
         decision.reason ?? null,
@@ -190,7 +313,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       await client.query('begin');
       const decisionResult = await client.query<StepDecisionRow>(
         `select decision_id, action, reason, replacement_step_json, resume_after_ms
-         from control_plane_step_decisions
+         from step_decisions
          where job_id = $1
            and source_step_id = $2
            and consumed_at is null
@@ -206,7 +329,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const decisionRow = decisionResult.rows[0];
       const updateResult = await client.query(
-        `update control_plane_step_decisions
+        `update step_decisions
          set consumed_at = now()
          where decision_id = $1
            and consumed_at is null`,
@@ -237,7 +360,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       ),
       this.pool.query<SnapshotDecisionRow>(
         `select job_id, source_step_id, action, reason, replacement_step_json, resume_after_ms
-         from control_plane_step_decisions
+         from step_decisions
          where consumed_at is null
          order by decision_id asc`,
       ),
@@ -278,5 +401,129 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     if (this.ownPool) {
       await this.pool.end();
     }
+  }
+
+  private async upsertRunProjection(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
+    const timestamps = toProjectionTimestamps(envelope);
+    await client.query(
+      upsertProjectionStatusSql('runs', 'run_id'),
+      [
+        envelope.payload.run_id,
+        envelope.tenant_id,
+        envelope.project_id,
+        toProjectionStatus(envelope),
+        timestamps.startedAt,
+        timestamps.finishedAt,
+        envelope.event_id,
+      ],
+    );
+  }
+
+  private async upsertRunItemProjection(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
+    const timestamps = toProjectionTimestamps(envelope);
+    await client.query(
+      `insert into run_items (
+         run_item_id,
+         run_id,
+         job_id,
+         tenant_id,
+         project_id,
+         attempt_no,
+         status,
+         started_at,
+         finished_at,
+         last_event_id
+       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       on conflict (run_item_id) do update set
+         run_id = excluded.run_id,
+         job_id = excluded.job_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         attempt_no = excluded.attempt_no,
+         status = case
+           when excluded.status = 'running' and run_items.status in ('passed', 'failed', 'canceled') then run_items.status
+           else excluded.status
+         end,
+         started_at = coalesce(run_items.started_at, excluded.started_at),
+         finished_at = coalesce(excluded.finished_at, run_items.finished_at),
+         last_event_id = excluded.last_event_id,
+         updated_at = now()`,
+      [
+        envelope.payload.run_item_id,
+        envelope.payload.run_id,
+        envelope.payload.job_id,
+        envelope.tenant_id,
+        envelope.project_id,
+        envelope.payload.attempt_no,
+        toProjectionStatus(envelope),
+        timestamps.startedAt,
+        timestamps.finishedAt,
+        envelope.event_id,
+      ],
+    );
+  }
+
+  private async insertStepEventProjection(client: SqlPoolClientLike, envelope: StepResultReportedEnvelope): Promise<void> {
+    const stepEvent = buildStepEventValues(envelope);
+    await client.query(
+      `insert into step_events (
+         event_id,
+         run_id,
+         run_item_id,
+         job_id,
+         tenant_id,
+         project_id,
+         attempt_no,
+         compiled_step_id,
+         source_step_id,
+         status,
+         started_at,
+         finished_at,
+         duration_ms,
+         error_code,
+         error_message,
+         artifacts_json,
+         extracted_variables_json,
+         envelope_json
+       ) values (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9,
+         $10, $11, $12, $13, $14, $15, $16::jsonb, $17::jsonb, $18::jsonb
+       )`,
+      [
+        stepEvent.eventId,
+        stepEvent.runId,
+        stepEvent.runItemId,
+        stepEvent.jobId,
+        stepEvent.tenantId,
+        stepEvent.projectId,
+        stepEvent.attemptNo,
+        stepEvent.compiledStepId,
+        stepEvent.sourceStepId,
+        stepEvent.status,
+        stepEvent.startedAt,
+        stepEvent.finishedAt,
+        stepEvent.durationMs,
+        stepEvent.errorCode,
+        stepEvent.errorMessage,
+        stepEvent.artifactsJson,
+        stepEvent.extractedVariablesJson,
+        stepEvent.envelopeJson,
+      ],
+    );
+  }
+
+  private async linkStepDecisions(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
+    await client.query(
+      `update step_decisions
+       set run_id = coalesce(run_id, $1),
+           run_item_id = coalesce(run_item_id, $2)
+       where job_id = $3
+         and (run_id is null or run_item_id is null)`,
+      [
+        envelope.payload.run_id,
+        envelope.payload.run_item_id,
+        envelope.payload.job_id,
+      ],
+    );
   }
 }
