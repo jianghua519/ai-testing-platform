@@ -22,7 +22,7 @@ export const createWebWorkerJobFixture = (): WebWorkerJob => ({
   },
   plan: {
     planId: 'plan-1',
-    planName: '打开首页',
+    planName: '两步导航流程',
     version: 'v1',
     browserProfile: {
       browser: 'chromium',
@@ -40,7 +40,17 @@ export const createWebWorkerJobFixture = (): WebWorkerJob => ({
         action: 'open',
         input: {
           source: 'literal',
-          value: 'https://example.com',
+          value: 'https://example.com/home',
+        },
+      },
+      {
+        stepId: 'open-dashboard',
+        name: '打开控制台',
+        kind: 'navigation',
+        action: 'open',
+        input: {
+          source: 'literal',
+          value: 'https://example.com/dashboard-original',
         },
       },
     ],

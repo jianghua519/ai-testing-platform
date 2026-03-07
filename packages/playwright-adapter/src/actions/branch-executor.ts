@@ -23,7 +23,7 @@ export class BranchStepExecutor implements StepExecutor {
       const finishedAt = session.clock.now();
       return {
         stepResult: buildStepResult({ step, session, startedAt, finishedAt, status: 'skipped', errorCode: normalized.code, errorMessage: normalized.message, attempts: 0 }),
-        childResults: driver.buildSkippedResults(step.children, session, 'branch condition not satisfied'),
+        childResults: await driver.buildSkippedResults(step.children, session, 'branch condition not satisfied'),
       };
     }
   }

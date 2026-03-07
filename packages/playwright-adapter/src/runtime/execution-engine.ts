@@ -17,8 +17,23 @@ export class ExecutionEngine implements StepExecutionDriver {
   }
 
   async executeStep(step: CompiledStep, session: ExecutionSession): Promise<StepExecutionOutput> {
-    const executor = this.registry.resolve(step);
-    return executor.execute(step, session, this);
+    const decision = session.controller ? await session.controller.beforeStep(step, session) : { action: 'execute' as const };
+    const effectiveStep = decision.replacementStep ?? step;
+
+    if (decision.action === 'skip') {
+      const skipped = buildSkippedStepResult(effectiveStep, session, decision.reason ?? 'step skipped by controller');
+      await session.observer?.onStepCompleted?.(skipped, session);
+      return {
+        stepResult: skipped,
+        childResults: [],
+      };
+    }
+
+    await session.observer?.onStepStarted?.(effectiveStep, session);
+    const executor = this.registry.resolve(effectiveStep);
+    const output = await executor.execute(effectiveStep, session, this);
+    await session.observer?.onStepCompleted?.(output.stepResult, session);
+    return output;
   }
 
   async executeChildren(steps: CompiledStep[], session: ExecutionSession): Promise<StepResult[]> {
@@ -34,11 +49,13 @@ export class ExecutionEngine implements StepExecutionDriver {
     await runAssertions(session.page, assertions, timeoutMs);
   }
 
-  buildSkippedResults(steps: CompiledStep[], session: ExecutionSession, reason: string): StepResult[] {
+  async buildSkippedResults(steps: CompiledStep[], session: ExecutionSession, reason: string): Promise<StepResult[]> {
     const results: StepResult[] = [];
     for (const step of steps) {
-      results.push(buildSkippedStepResult(step, session, reason));
-      results.push(...this.buildSkippedResults(step.children, session, reason));
+      const result = buildSkippedStepResult(step, session, reason);
+      results.push(result);
+      await session.observer?.onStepCompleted?.(result, session);
+      results.push(...(await this.buildSkippedResults(step.children, session, reason)));
     }
     return results;
   }

@@ -1,10 +1,11 @@
 import { DefaultDslCompiler } from '@aiwtp/dsl-compiler';
-import { RegistryBasedPlaywrightAdapter } from '@aiwtp/playwright-adapter';
+import { RegistryBasedPlaywrightAdapter, type StepExecutionController } from '@aiwtp/playwright-adapter';
 import type { CompileResponse } from '@aiwtp/dsl-compiler';
 import type { JobMetadata, WebWorkerJob, WebWorkerResult } from './types.js';
 import type { ResultPublisher } from '../reporting/types.js';
 import type { BrowserLauncher } from '../session/browser-launcher.js';
 import { openExecutionSession } from '../session/session-manager.js';
+import { PublishingStepObserver } from '../reporting/step-result-observer.js';
 
 const buildMetadata = (job: WebWorkerJob): JobMetadata => ({
   jobId: job.jobId,
@@ -23,6 +24,7 @@ export class WebJobRunner {
     private readonly adapter = new RegistryBasedPlaywrightAdapter(),
     private readonly publisher: ResultPublisher,
     private readonly browserLauncher: BrowserLauncher,
+    private readonly controller?: StepExecutionController,
   ) {}
 
   async run(job: WebWorkerJob): Promise<WebWorkerResult> {
@@ -45,7 +47,10 @@ export class WebJobRunner {
 
     const browser = await this.browserLauncher.launch(compileResponse.compiledPlan.browserProfile);
     try {
-      const session = await openExecutionSession(browser, compileResponse.compiledPlan);
+      const session = await openExecutionSession(browser, compileResponse.compiledPlan, {
+        controller: this.controller,
+        observer: new PublishingStepObserver(metadata, this.publisher),
+      });
       try {
         const output = await this.adapter.executePlan(compileResponse.compiledPlan, session);
         const status = output.planResult.status === 'passed' ? 'executed' : 'execution_failed';

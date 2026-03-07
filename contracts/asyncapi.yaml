@@ -27,6 +27,11 @@ channels:
       summary: Runner reports job results back to Control Plane.
       message:
         $ref: "#/components/messages/JobResultReported"
+  runner.step_results.reported:
+    subscribe:
+      summary: Runner reports per-step execution results back to Control Plane.
+      message:
+        $ref: "#/components/messages/StepResultReported"
   run.events:
     subscribe:
       summary: Run lifecycle events emitted by Control Plane.
@@ -132,6 +137,35 @@ components:
           type: object
           description: Metering usage (e.g. tokens, duration_ms).
           additionalProperties: true
+    StepResultPayload:
+      type: object
+      required: [job_id, run_id, run_item_id, attempt_no, compiled_step_id, source_step_id, status, started_at, finished_at, duration_ms]
+      properties:
+        job_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        attempt_no: { type: integer, minimum: 0 }
+        compiled_step_id: { type: string }
+        source_step_id: { type: string }
+        status:
+          type: string
+          enum: [pending, running, passed, failed, skipped, error]
+        started_at: { $ref: "#/components/schemas/ISO8601" }
+        finished_at: { $ref: "#/components/schemas/ISO8601" }
+        duration_ms: { type: integer, minimum: 0 }
+        error:
+          type: object
+          additionalProperties: true
+        artifacts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        extracted_variables:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
   messages:
     RunCreated:
       name: RunCreated
@@ -215,3 +249,13 @@ components:
               event_type: { const: job.result_reported }
               payload:
                 $ref: "#/components/schemas/JobResultPayload"
+    StepResultReported:
+      name: StepResultReported
+      payload:
+        allOf:
+          - $ref: "#/components/schemas/EventEnvelope"
+          - type: object
+            properties:
+              event_type: { const: step.result_reported }
+              payload:
+                $ref: "#/components/schemas/StepResultPayload"

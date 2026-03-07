@@ -5,6 +5,7 @@ export * from './reporting/noop-publisher.js';
 export * from './reporting/http-publisher.js';
 export * from './reporting/result-envelope.js';
 export * from './reporting/create-publisher.js';
+export * from './reporting/step-result-observer.js';
 export * from './session/browser-launcher.js';
 export * from './session/session-manager.js';
 export * from './bootstrap/create-worker.js';

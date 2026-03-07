@@ -24,6 +24,21 @@ export interface ExecutionClock {
   now(): Date;
 }
 
+export interface StepControlDecision {
+  action: 'execute' | 'skip';
+  replacementStep?: CompiledStep;
+  reason?: string;
+}
+
+export interface StepExecutionController {
+  beforeStep(step: CompiledStep, session: ExecutionSession): Promise<StepControlDecision>;
+}
+
+export interface StepLifecycleObserver {
+  onStepStarted?(step: CompiledStep, session: ExecutionSession): Promise<void>;
+  onStepCompleted?(stepResult: StepResult, session: ExecutionSession): Promise<void>;
+}
+
 export interface ExecutionSession {
   browser: Browser;
   context: BrowserContext;
@@ -31,6 +46,8 @@ export interface ExecutionSession {
   variables: RuntimeVariableStore;
   artifacts: ArtifactCollector;
   clock: ExecutionClock;
+  controller?: StepExecutionController;
+  observer?: StepLifecycleObserver;
 }
 
 export interface StepExecutionOutput {
@@ -45,7 +62,7 @@ export interface PlanExecutionOutput {
 export interface StepExecutionDriver {
   executeChildren(steps: CompiledStep[], session: ExecutionSession): Promise<StepResult[]>;
   evaluateAssertions(assertions: CompiledAssertion[], session: ExecutionSession, timeoutMs: number): Promise<void>;
-  buildSkippedResults(steps: CompiledStep[], session: ExecutionSession, reason: string): StepResult[];
+  buildSkippedResults(steps: CompiledStep[], session: ExecutionSession, reason: string): Promise<StepResult[]>;
 }
 
 export interface StepExecutor {

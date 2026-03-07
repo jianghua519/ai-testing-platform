@@ -1,8 +1,22 @@
-import { createExecutionSession, type ExecutionSession } from '@aiwtp/playwright-adapter';
+import {
+  createExecutionSession,
+  type ExecutionSession,
+  type StepExecutionController,
+  type StepLifecycleObserver,
+} from '@aiwtp/playwright-adapter';
 import type { Browser } from 'playwright-core';
 import type { CompiledWebPlan } from '@aiwtp/web-dsl-schema';
 
-export const openExecutionSession = async (browser: Browser, plan: CompiledWebPlan): Promise<ExecutionSession> =>
+export interface SessionRuntimeOptions {
+  controller?: StepExecutionController;
+  observer?: StepLifecycleObserver;
+}
+
+export const openExecutionSession = async (
+  browser: Browser,
+  plan: CompiledWebPlan,
+  options: SessionRuntimeOptions = {},
+): Promise<ExecutionSession> =>
   createExecutionSession({
     browser,
     contextOptions: {
@@ -10,4 +24,6 @@ export const openExecutionSession = async (browser: Browser, plan: CompiledWebPl
       storageState: plan.browserProfile.storageStateRef,
     },
     variables: plan.runtimeVariables,
+    controller: options.controller,
+    observer: options.observer,
   });

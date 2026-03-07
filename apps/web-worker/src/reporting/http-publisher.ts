@@ -1,5 +1,6 @@
 import type { HttpResultPublisherConfig, ResultEnvelopeFactory, ResultPublisher } from './types.js';
-import type { WebWorkerResult } from '../job-runner/types.js';
+import type { JobMetadata, WebWorkerResult } from '../job-runner/types.js';
+import type { StepResult } from '@aiwtp/web-dsl-schema';
 import { DefaultResultEnvelopeFactory } from './result-envelope.js';
 
 export class HttpResultPublisher implements ResultPublisher {
@@ -10,7 +11,14 @@ export class HttpResultPublisher implements ResultPublisher {
   ) {}
 
   async publish(result: WebWorkerResult): Promise<void> {
-    const envelope = this.envelopeFactory.build(result);
+    await this.postEnvelope(this.envelopeFactory.buildJobResult(result));
+  }
+
+  async publishStep(metadata: JobMetadata, stepResult: StepResult): Promise<void> {
+    await this.postEnvelope(this.envelopeFactory.buildStepResult(metadata, stepResult));
+  }
+
+  private async postEnvelope(envelope: object): Promise<void> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs ?? 5000);
 
