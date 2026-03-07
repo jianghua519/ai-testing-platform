@@ -77,6 +77,7 @@ export interface ControlPlaneRunItemRecord {
   attemptNo: number;
   status: string;
   jobKind?: string | null;
+  requiredCapabilities?: string[] | null;
   assignedAgentId?: string | null;
   leaseToken?: string | null;
   startedAt: string | null;
@@ -163,6 +164,7 @@ export interface ControlPlaneEnqueueWebRunInput {
   mode?: string;
   plan: WebStepPlanDraft;
   envProfile: EnvProfile;
+  requiredCapabilities?: string[];
   variableContext?: Record<string, unknown>;
   traceId?: string;
   correlationId?: string;

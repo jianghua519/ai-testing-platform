@@ -59,3 +59,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-111112-control-plane-002-migration-evidence.md` - control-plane 002 migration、分页查询接口和容器化本地栈 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-115908-control-plane-agent-worker-postgresql-evidence.md` - 把 control-plane + agent + worker + PostgreSQL 做成真正的调度系统 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-124416-playwright-agent-capability-lease-evidence.md` - 真实 Playwright 调度执行与 agent capability/lease 正式化 的测试举证记录。

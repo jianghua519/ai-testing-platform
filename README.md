@@ -1,11 +1,11 @@
 # AI Web Testing Platform V2
 
-这个仓库当前已经从纯规范仓库推进到“控制面 + agent + worker + PostgreSQL”最小调度系统原型。
+这个仓库当前已经从纯规范仓库推进到“control-plane + agent + worker + PostgreSQL”最小调度系统原型，并且容器化调度 smoke 已经能真实拉起 Playwright Chromium。
 
 当前代码骨架：
 
 - `apps/web-worker`：Web 执行 worker，负责编译 DSL、执行 step、回传结果，并提供轮询式 agent 主循环
-- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、step 决策、任务入队、agent 注册/心跳/租约获取与释放，并支持 `inmemory`、`file`、`postgres` 三种存储模式
+- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、step 决策、任务入队、agent 注册/心跳/租约获取与释放，并支持 `required_capabilities` 能力匹配
 - `packages/web-dsl-schema`：源 DSL、编译后模型、执行结果类型
 - `packages/dsl-compiler`：DSL 编译器骨架
 - `packages/playwright-adapter`：Playwright 执行适配层与 step 执行引擎
@@ -37,7 +37,7 @@
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
 - `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
 - `npm run smoke:control-plane:compose`：在容器化本地栈中验证 migration、分页读模型和 `run_id` 级 step events 查询
-- `npm run smoke:scheduler:compose`：在容器化本地栈中验证 `control-plane -> agent -> worker -> runner-results -> PostgreSQL` 调度闭环
+- `npm run smoke:scheduler:compose`：在容器化本地栈中验证 `control-plane -> agent -> real Playwright worker -> runner-results -> PostgreSQL` 调度闭环，并验证 capability 匹配
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`
@@ -61,6 +61,12 @@
 - `POST /api/v1/internal/runner-results`
 - `POST /api/v1/internal/jobs/{job_id}/steps/{source_step_id}:override`
 - `POST /api/v1/agent/jobs/{job_id}/steps/{source_step_id}:decide`
+
+agent 运行约定：
+
+- `WEB_AGENT_SUPPORTED_JOB_KINDS` 控制 job kind 过滤
+- `WEB_AGENT_BROWSERS` 生成 `browser:<name>` capability，默认是 `chromium`
+- `WEB_AGENT_CAPABILITIES` 可显式补充额外 capability
 
 容器化本地栈：
 

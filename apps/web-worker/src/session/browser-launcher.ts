@@ -17,8 +17,24 @@ const getBrowserType = (browser: BrowserKind): BrowserType<Browser> => {
   }
 };
 
+const getLaunchArgs = (browser: BrowserKind): string[] | undefined => {
+  if (browser !== 'chromium') {
+    return undefined;
+  }
+
+  const args = ['--disable-dev-shm-usage'];
+  if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    args.push('--no-sandbox');
+  }
+
+  return args;
+};
+
 export class PlaywrightBrowserLauncher implements BrowserLauncher {
   async launch(profile: BrowserProfile): Promise<Browser> {
-    return getBrowserType(profile.browser).launch({ headless: profile.headless });
+    return getBrowserType(profile.browser).launch({
+      headless: profile.headless,
+      args: getLaunchArgs(profile.browser),
+    });
   }
 }

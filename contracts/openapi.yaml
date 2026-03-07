@@ -973,6 +973,9 @@ components:
         env_profile:
           type: object
           additionalProperties: true
+        required_capabilities:
+          type: array
+          items: { type: string, minLength: 1 }
         variable_context:
           type: object
           additionalProperties: true

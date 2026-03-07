@@ -15,6 +15,20 @@ const supportedJobKinds = (process.env.WEB_AGENT_SUPPORTED_JOB_KINDS ?? 'web')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+const browserCapabilities = (process.env.WEB_AGENT_BROWSERS ?? 'chromium')
+  .split(',')
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean)
+  .map((value) => `browser:${value}`);
+const explicitCapabilities = (process.env.WEB_AGENT_CAPABILITIES ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const capabilities = Array.from(new Set([
+  ...supportedJobKinds,
+  ...browserCapabilities,
+  ...explicitCapabilities,
+]));
 
 process.env.WEB_WORKER_RESULT_PUBLISH_MODE ??= 'http';
 process.env.WEB_WORKER_RESULT_PUBLISH_ENDPOINT ??= `${baseUrl}/api/v1/internal/runner-results`;
@@ -33,7 +47,7 @@ const agent = new PollingWebAgent(
     platform: process.env.WEB_AGENT_PLATFORM ?? process.platform,
     architecture: process.env.WEB_AGENT_ARCHITECTURE ?? process.arch,
     runtimeKind: process.env.WEB_AGENT_RUNTIME_KIND ?? 'host',
-    capabilities: supportedJobKinds,
+    capabilities,
     metadata: {
       source: 'start_polling_web_agent',
       hostname: os.hostname(),

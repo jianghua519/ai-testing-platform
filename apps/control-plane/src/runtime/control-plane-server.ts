@@ -74,6 +74,8 @@ const isEnqueueWebRunRequest = (value: unknown): value is ControlPlaneEnqueueWeb
   && isString(value.name)
   && isObject(value.plan)
   && isObject(value.envProfile ?? value.env_profile)
+  && ((value.requiredCapabilities === undefined && value.required_capabilities === undefined)
+    || isStringArray(value.requiredCapabilities ?? value.required_capabilities))
   && (value.variableContext === undefined || value.variable_context === undefined || isObject(value.variableContext ?? value.variable_context));
 
 const isRegisterAgentRequest = (value: unknown): value is ControlPlaneRegisterAgentInput =>
@@ -115,6 +117,9 @@ const normalizeEnqueueWebRun = (value: Record<string, unknown>): ControlPlaneEnq
   mode: typeof value.mode === 'string' ? value.mode : undefined,
   plan: value.plan as ControlPlaneEnqueueWebRunInput['plan'],
   envProfile: (value.envProfile ?? value.env_profile) as ControlPlaneEnqueueWebRunInput['envProfile'],
+  requiredCapabilities: isStringArray(value.requiredCapabilities ?? value.required_capabilities)
+    ? [...(value.requiredCapabilities ?? value.required_capabilities) as string[]]
+    : undefined,
   variableContext: (value.variableContext ?? value.variable_context) as Record<string, unknown> | undefined,
   traceId: typeof value.traceId === 'string' ? value.traceId : typeof value.trace_id === 'string' ? value.trace_id : undefined,
   correlationId: typeof value.correlationId === 'string' ? value.correlationId : typeof value.correlation_id === 'string' ? value.correlation_id : undefined,
@@ -218,6 +223,7 @@ const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
   summary: {
     job_id: runItem.jobId,
     job_kind: runItem.jobKind ?? undefined,
+    required_capabilities: runItem.requiredCapabilities ?? undefined,
     assigned_agent_id: runItem.assignedAgentId ?? undefined,
     lease_token: runItem.leaseToken ?? undefined,
   },

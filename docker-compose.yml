@@ -47,6 +47,7 @@ services:
       CONTROL_PLANE_STORE_MODE: postgres
       CONTROL_PLANE_DATABASE_URL: postgresql://aiwtp:aiwtp-password@postgres:5432/aiwtp
       CONTROL_PLANE_BASE_URL: http://control-plane:8080
+    shm_size: 1gb
     command: ["sleep", "infinity"]
 
 volumes:

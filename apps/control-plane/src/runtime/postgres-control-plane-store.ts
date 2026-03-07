@@ -36,6 +36,7 @@ import {
   listControlPlanePostgresMigrations,
   runControlPlanePostgresMigrations,
 } from './postgres-migrations.js';
+import { buildWebRunRequiredCapabilities, normalizeCapabilities } from './job-capabilities.js';
 import { decodeCursor, encodeCursor } from './pagination.js';
 
 interface SqlQueryResult<Row> {
@@ -105,6 +106,7 @@ interface RunItemProjectionRow {
   attempt_no: number;
   status: string;
   job_kind: string | null;
+  required_capabilities_json: string[] | string;
   assigned_agent_id: string | null;
   lease_token: string | null;
   started_at: string | null;
@@ -144,6 +146,7 @@ interface QueuedRunItemRow {
   attempt_no: number;
   status: string;
   job_kind: string;
+  required_capabilities_json: string[] | string;
   assigned_agent_id: string | null;
   lease_token: string | null;
   last_event_id: string;
@@ -320,6 +323,7 @@ const mapRunItemProjection = (row: RunItemProjectionRow): ControlPlaneRunItemRec
   attemptNo: row.attempt_no,
   status: row.status,
   jobKind: row.job_kind,
+  requiredCapabilities: parseJsonColumn<string[]>(row.required_capabilities_json) ?? [],
   assignedAgentId: row.assigned_agent_id,
   leaseToken: row.lease_token,
   startedAt: row.started_at,
@@ -359,7 +363,7 @@ const mapAgent = (row: AgentRow): ControlPlaneAgentRecord => ({
   architecture: row.architecture,
   runtimeKind: row.runtime_kind,
   status: row.status,
-  capabilities: parseJsonColumn<string[]>(row.capabilities_json) ?? [],
+  capabilities: normalizeCapabilities(parseJsonColumn<string[]>(row.capabilities_json) ?? []),
   metadata: parseJsonColumn<Record<string, unknown>>(row.metadata_json) ?? {},
   lastHeartbeatAt: row.last_heartbeat_at,
   createdAt: row.created_at,
@@ -434,6 +438,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const jobId = randomUUID();
     const queueEventId = randomUUID();
     const now = new Date().toISOString();
+    const requiredCapabilities = normalizeCapabilities(
+      input.requiredCapabilities ?? buildWebRunRequiredCapabilities(input.plan, input.envProfile),
+    );
     const job: WebWorkerJob = {
       jobId,
       tenantId: input.tenantId,
@@ -485,11 +492,12 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
            attempt_no,
            status,
            job_kind,
+           required_capabilities_json,
            job_payload_json,
            last_event_id,
            created_at,
            updated_at
-         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)`,
+         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13)`,
         [
           runItemId,
           runId,
@@ -499,6 +507,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           0,
           'pending',
           'web',
+          JSON.stringify(requiredCapabilities),
           JSON.stringify(job),
           queueEventId,
           now,
@@ -536,6 +545,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         attemptNo: 0,
         status: 'pending',
         jobKind: 'web',
+        requiredCapabilities,
         assignedAgentId: null,
         leaseToken: null,
         startedAt: null,
@@ -549,6 +559,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async registerAgent(input: ControlPlaneRegisterAgentInput): Promise<ControlPlaneAgentRecord> {
+    const capabilities = normalizeCapabilities(input.capabilities);
     const result = await this.pool.query<AgentRow>(
       `insert into agents (
          agent_id,
@@ -588,7 +599,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         input.architecture,
         input.runtimeKind,
         input.status ?? 'online',
-        JSON.stringify(input.capabilities),
+        JSON.stringify(capabilities),
         JSON.stringify(input.metadata ?? {}),
       ],
     );
@@ -597,6 +608,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   }
 
   async heartbeatAgent(agentId: string, input: ControlPlaneHeartbeatAgentInput): Promise<ControlPlaneAgentRecord | undefined> {
+    const capabilities = input.capabilities ? normalizeCapabilities(input.capabilities) : undefined;
     const result = await this.pool.query<AgentRow>(
       `update agents
        set status = coalesce($2, status),
@@ -610,7 +622,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       [
         agentId,
         input.status ?? null,
-        input.capabilities ? JSON.stringify(input.capabilities) : null,
+        capabilities ? JSON.stringify(capabilities) : null,
         input.metadata ? JSON.stringify(input.metadata) : null,
       ],
     );
@@ -640,18 +652,20 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const agent = mapAgent(agentResult.rows[0]);
       const supportedJobKinds = input.supportedJobKinds.length > 0 ? input.supportedJobKinds : ['web'];
+      const agentCapabilities = normalizeCapabilities(agent.capabilities);
       const candidateResult = await client.query<QueuedRunItemRow>(
         `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-                assigned_agent_id, lease_token, last_event_id, created_at, updated_at, job_payload_json
+                required_capabilities_json, assigned_agent_id, lease_token, last_event_id, created_at, updated_at, job_payload_json
          from run_items
          where tenant_id = $1
            and ($2::text is null or project_id = $2)
            and status = 'pending'
            and job_kind = any($3::text[])
+           and coalesce(required_capabilities_json, '[]'::jsonb) <@ $4::jsonb
          order by created_at asc, run_item_id asc
          limit 1
          for update skip locked`,
-        [agent.tenantId, agent.projectId, supportedJobKinds],
+        [agent.tenantId, agent.projectId, supportedJobKinds, JSON.stringify(agentCapabilities)],
       );
 
       if (candidateResult.rows.length === 0) {
@@ -1020,7 +1034,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
     const result = await this.pool.query<RunItemProjectionRow>(
       `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-              assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
+              required_capabilities_json, assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
        from run_items
        where run_item_id = $1
        limit 1`,
@@ -1033,7 +1047,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.runId];
     let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-                      assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
+                      required_capabilities_json, assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
        from run_items
        where run_id = $1`;
 
