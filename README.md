@@ -38,6 +38,7 @@
 - `bash ./scripts/validate_docs.sh`
 - `npm install`
 - `npm run typecheck`
+- `npm run compose:postgres:reset`
 - `npm run ai-orchestrator:serve`
 - `npm run ai-orchestrator:migrate:postgres`
 - `npm run control-plane:serve`
@@ -61,6 +62,7 @@ AI Orchestrator：
 - 当前新增 `apps/ai-orchestrator`，先落地 Phase 1 的最小能力：assistant thread、长期记忆提取、LangGraph turn 编排和 chat API
 - compose 环境下默认启用 `AI_ORCHESTRATOR_STORE_MODE=postgres`，assistant thread、message、memory fact 会落到 PostgreSQL
 - 模型提供方通过根目录 `.env` 配置，默认 `AI_PROVIDER=google`
+- Docker build context 已忽略 `.env*`，运行配置只通过本地 `.env` 和 compose 环境注入，不会被打进镜像层
 - 当前持久化相关环境变量：
   - `AI_ORCHESTRATOR_STORE_MODE=memory|postgres`
   - `AI_ORCHESTRATOR_DATABASE_URL`
@@ -124,9 +126,7 @@ artifact 存储约定：
 容器化本地栈：
 
 - `docker compose build tools control-plane ai-orchestrator`
-- `docker compose down -v`
-- `docker compose up -d postgres minio --wait`
-- `docker compose run --rm tools npm run control-plane:migrate:postgres`
+- `npm run compose:postgres:reset`
 - `AI_PROVIDER=mock docker compose up -d control-plane ai-orchestrator --wait`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:mock`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:postgres:persistence`
@@ -134,3 +134,9 @@ artifact 存储约定：
 - `docker compose run --rm tools npm run smoke:scheduler:compose`
 - `docker compose run --rm tools npm run control-plane:artifacts:prune`
 - `docker compose down -v`
+
+镜像说明：
+
+- `control-plane` 和 `ai-orchestrator` 使用 `Dockerfile` 的 `app-runtime` 目标，保持较小的 Node 运行时镜像
+- `tools` 使用 `Dockerfile` 的 `playwright-runtime` 目标，直接基于官方 `mcr.microsoft.com/playwright:v1.58.2-noble`
+- `npm ci` 使用 BuildKit cache mount，避免每次重新下载整包依赖

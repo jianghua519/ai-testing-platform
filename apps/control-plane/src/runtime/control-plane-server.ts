@@ -4,49 +4,78 @@ import { pipeline } from 'node:stream/promises';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type {
-  ControlPlaneCreateRecordingEventInput,
-  ControlPlaneCreateRecordingInput,
-  ControlPlaneCreateDatasetRowInput,
-  ControlPlaneCreateTestCaseInput,
-  ControlPlaneCreateTestCaseVersionInput,
-  ControlPlaneDataTemplateVersionRecord,
-  ControlPlaneDeriveTestCaseResult,
-  ControlPlaneDatasetRowRecord,
-  ControlPlaneEnqueueCaseVersionRunInput,
   ControlPlaneAcquireLeaseInput,
-  ControlPlaneAgentRecord,
-  ControlPlaneArtifactRecord,
   ControlPlaneCompleteLeaseInput,
   ControlPlaneEnqueueWebRunInput,
   ControlPlaneHeartbeatAgentInput,
   ControlPlaneHeartbeatLeaseInput,
-  ControlPlaneJobLeaseRecord,
-  ControlPlanePage,
   ControlPlanePrincipal,
-  ControlPlanePublishRecordingInput,
-  ControlPlaneRegisterAgentInput,
-  ControlPlaneRecordingAnalysisJobRecord,
-  ControlPlaneRecordingRecord,
-  ControlPlaneRunItemRecord,
-  ControlPlaneRunRecord,
-  ControlPlaneSchedulingStore,
   ControlPlaneServer,
-  ControlPlaneStepEventRecord,
   ControlPlaneStore,
-  ControlPlaneTestCaseRecord,
-  ControlPlaneTestCaseVersionRecord,
-  ControlPlaneExtractTestCaseInput,
-  ControlPlaneUpdateDatasetRowInput,
-  ControlPlaneUpdateTestCaseInput,
   JobEventsResponse,
-  RunnerResultEnvelope,
-  StepOverrideRequest,
 } from '../types.js';
-import type { StepControlRequest, StepControlResponse } from '@aiwtp/web-worker';
 import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js';
 import { PaginationError, parseLimit } from './pagination.js';
-import { createArtifactBlobStoreFromEnv, type ArtifactDownloadMode } from './artifact-blob-store.js';
+import { createArtifactBlobStoreFromEnv } from './artifact-blob-store.js';
 import { readBearerToken, verifyControlPlaneJwt } from './auth.js';
+import {
+  buildDecision,
+  isAcquireLeaseRequest,
+  isAppendRecordingEventsRequest,
+  isArtifactDownloadMode,
+  isBindDefaultDatasetRequest,
+  isCompleteLeaseRequest,
+  isCreateRecordingRequest,
+  isDatasetRowCreateRequest,
+  isDatasetRowPatchRequest,
+  isEnqueueWebRunRequest,
+  isExtractTestCaseRequest,
+  isHeartbeatAgentRequest,
+  isHeartbeatLeaseRequest,
+  isPublishRecordingRequest,
+  isRegisterAgentRequest,
+  isRunCreateRequest,
+  isRunnerResultEnvelope,
+  isStepControlRequest,
+  isStepOverrideRequest,
+  isTestCaseCreateRequest,
+  isTestCasePatchRequest,
+  isTestCaseVersionCreateRequest,
+  normalizeAcquireLease,
+  normalizeCreateRecordingRequest,
+  normalizeDatasetRowCreateRequest,
+  normalizeDatasetRowPatchRequest,
+  normalizeEnqueueWebRun,
+  normalizeExtractTestCaseRequest,
+  normalizeHeartbeatAgent,
+  normalizeHeartbeatLease,
+  normalizePublishRecordingRequest,
+  normalizeRecordingEventRequests,
+  normalizeRegisterAgent,
+  normalizeRunExecutionPolicy,
+  normalizeTestCaseCreateRequest,
+  normalizeTestCasePatchRequest,
+  normalizeTestCaseVersionCreateRequest,
+  readJson,
+} from './control-plane-api-requests.js';
+import {
+  toApiAgent,
+  toApiArtifact,
+  toApiDataTemplateVersion,
+  toApiDatasetRow,
+  toApiDerivedTestCaseBundle,
+  toApiLease,
+  toApiPrincipal,
+  toApiRecording,
+  toApiRecordingAnalysisJob,
+  toApiRun,
+  toApiRunItem,
+  toApiStepEvent,
+  toApiTestCase,
+  toApiTestCaseBundle,
+  toApiTestCaseVersion,
+  toPaginatedPayload,
+} from './control-plane-api-responses.js';
 import { ControlPlaneRequestError } from './test-assets.js';
 
 const json = (response: ServerResponse, status: number, payload?: unknown): void => {
@@ -60,664 +89,8 @@ const json = (response: ServerResponse, status: number, payload?: unknown): void
   response.end(JSON.stringify(payload));
 };
 
-const readJson = async <T>(request: IncomingMessage): Promise<T> => {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  if (chunks.length === 0) {
-    return {} as T;
-  }
-
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
-};
-
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
-const isString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
-const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
-const isPositiveInteger = (value: unknown): value is number => Number.isInteger(value) && Number(value) > 0;
-const isRunMode = (value: unknown): value is 'standard' | 'intelligent' =>
-  value === 'standard' || value === 'intelligent';
-
-const isRunnerResultEnvelope = (value: unknown): value is RunnerResultEnvelope =>
-  isObject(value) && typeof value.event_type === 'string' && isObject(value.payload) && typeof value.payload.job_id === 'string';
-
-const isStepControlRequest = (value: unknown): value is StepControlRequest =>
-  isObject(value)
-  && typeof value.job_id === 'string'
-  && typeof value.source_step_id === 'string'
-  && typeof value.compiled_step_id === 'string'
-  && isObject(value.compiled_step);
-
-const isStepOverrideRequest = (value: unknown): value is StepOverrideRequest =>
-  isObject(value)
-  && typeof value.action === 'string';
-
-const isArtifactDownloadMode = (value: string): value is ArtifactDownloadMode =>
-  value === 'redirect' || value === 'stream';
-
-const isInlineWebRunSelection = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && value.kind === 'inline_web_plan'
-  && isObject(value.plan)
-  && isObject(value.envProfile ?? value.env_profile);
-
-const isCaseVersionRunSelection = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && value.kind === 'case_version'
-  && isString(value.testCaseVersionId ?? value.test_case_version_id)
-  && ((value.datasetRowId === undefined && value.dataset_row_id === undefined)
-    || isString(value.datasetRowId ?? value.dataset_row_id));
-
-const isRunCreateRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && isString(value.tenant_id)
-  && isString(value.project_id)
-  && isString(value.name)
-  && isRunMode(value.mode)
-  && (isInlineWebRunSelection(value.selection) || isCaseVersionRunSelection(value.selection))
-  && ((value.execution_policy === undefined)
-    || isObject(value.execution_policy));
-
-const isEnqueueWebRunRequest = (value: unknown): value is ControlPlaneEnqueueWebRunInput =>
-  isObject(value)
-  && isString(value.tenantId ?? value.tenant_id)
-  && isString(value.projectId ?? value.project_id)
-  && isString(value.name)
-  && isObject(value.plan)
-  && isObject(value.envProfile ?? value.env_profile)
-  && ((value.requiredCapabilities === undefined && value.required_capabilities === undefined)
-    || isStringArray(value.requiredCapabilities ?? value.required_capabilities))
-  && (value.variableContext === undefined || value.variable_context === undefined || isObject(value.variableContext ?? value.variable_context));
-
-const isRegisterAgentRequest = (value: unknown): value is ControlPlaneRegisterAgentInput =>
-  isObject(value)
-  && isString(value.agentId ?? value.agent_id)
-  && isString(value.tenantId ?? value.tenant_id)
-  && isString(value.name)
-  && isString(value.platform)
-  && isString(value.architecture)
-  && isString(value.runtimeKind ?? value.runtime_kind)
-  && isStringArray(value.capabilities)
-  && (value.maxParallelSlots === undefined || value.max_parallel_slots === undefined || isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots))
-  && (value.projectId === undefined || value.project_id === undefined || typeof (value.projectId ?? value.project_id) === 'string');
-
-const isHeartbeatAgentRequest = (value: unknown): value is ControlPlaneHeartbeatAgentInput =>
-  isObject(value)
-  && (value.status === undefined || isString(value.status))
-  && (value.capabilities === undefined || isStringArray(value.capabilities))
-  && (value.metadata === undefined || isObject(value.metadata))
-  && (value.maxParallelSlots === undefined || value.max_parallel_slots === undefined || isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots));
-
-const isAcquireLeaseRequest = (value: unknown): value is ControlPlaneAcquireLeaseInput =>
-  isObject(value)
-  && isStringArray(value.supported_job_kinds ?? value.supportedJobKinds)
-  && Number.isInteger(value.lease_ttl_seconds ?? value.leaseTtlSeconds)
-  && Number(value.lease_ttl_seconds ?? value.leaseTtlSeconds) > 0;
-
-const isHeartbeatLeaseRequest = (value: unknown): value is ControlPlaneHeartbeatLeaseInput =>
-  isObject(value)
-  && Number.isInteger(value.lease_ttl_seconds ?? value.leaseTtlSeconds)
-  && Number(value.lease_ttl_seconds ?? value.leaseTtlSeconds) > 0;
-
-const isCompleteLeaseRequest = (value: unknown): value is ControlPlaneCompleteLeaseInput =>
-  isObject(value)
-  && ['succeeded', 'failed', 'canceled'].includes(String(value.status));
-
-const normalizeEnqueueWebRun = (value: Record<string, unknown>): ControlPlaneEnqueueWebRunInput => ({
-  tenantId: String(value.tenantId ?? value.tenant_id),
-  projectId: String(value.projectId ?? value.project_id),
-  name: String(value.name),
-  mode: typeof value.mode === 'string' ? value.mode : undefined,
-  plan: value.plan as ControlPlaneEnqueueWebRunInput['plan'],
-  envProfile: (value.envProfile ?? value.env_profile) as ControlPlaneEnqueueWebRunInput['envProfile'],
-  requiredCapabilities: isStringArray(value.requiredCapabilities ?? value.required_capabilities)
-    ? [...(value.requiredCapabilities ?? value.required_capabilities) as string[]]
-    : undefined,
-  variableContext: (value.variableContext ?? value.variable_context) as Record<string, unknown> | undefined,
-  traceId: typeof value.traceId === 'string' ? value.traceId : typeof value.trace_id === 'string' ? value.trace_id : undefined,
-  correlationId: typeof value.correlationId === 'string' ? value.correlationId : typeof value.correlation_id === 'string' ? value.correlation_id : undefined,
-});
-
-const normalizeRunExecutionPolicy = (value: Record<string, unknown>) => {
-  const executionPolicy = isObject(value.execution_policy) ? value.execution_policy : {};
-  return {
-    tenantId: String(value.tenant_id),
-    projectId: String(value.project_id),
-    name: String(value.name),
-    mode: String(value.mode),
-    requiredCapabilities: isStringArray(executionPolicy.requiredCapabilities ?? executionPolicy.required_capabilities)
-      ? [...(executionPolicy.requiredCapabilities ?? executionPolicy.required_capabilities) as string[]]
-      : undefined,
-    variableContext: isObject(executionPolicy.variableContext ?? executionPolicy.variable_context)
-      ? (executionPolicy.variableContext ?? executionPolicy.variable_context) as Record<string, unknown>
-      : undefined,
-    traceId: typeof executionPolicy.traceId === 'string'
-      ? executionPolicy.traceId
-      : typeof executionPolicy.trace_id === 'string'
-        ? executionPolicy.trace_id
-        : undefined,
-    correlationId: typeof executionPolicy.correlationId === 'string'
-      ? executionPolicy.correlationId
-      : typeof executionPolicy.correlation_id === 'string'
-        ? executionPolicy.correlation_id
-        : undefined,
-  };
-};
-
-const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
-const isLocatorDraftShape = (value: unknown): value is { strategy: string; value: string } =>
-  isObject(value)
-  && isString(value.strategy)
-  && isString(value.value);
-
-const isDatasetPayload = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && ((value.name === undefined) || isString(value.name))
-  && ((value.values === undefined) || isObject(value.values));
-
-const isTestCaseCreateRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && isString(value.tenant_id)
-  && isString(value.project_id)
-  && isString(value.name)
-  && isObject(value.plan)
-  && isObject(value.env_profile)
-  && ((value.version_label === undefined) || isString(value.version_label))
-  && ((value.change_summary === undefined) || isString(value.change_summary))
-  && ((value.publish === undefined) || isBoolean(value.publish))
-  && ((value.default_dataset === undefined) || isDatasetPayload(value.default_dataset));
-
-const isTestCasePatchRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && ((value.name === undefined) || isString(value.name))
-  && ((value.status === undefined) || ['draft', 'active', 'archived'].includes(String(value.status)));
-
-const isTestCaseVersionCreateRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && isObject(value.plan)
-  && isObject(value.env_profile)
-  && ((value.version_label === undefined) || isString(value.version_label))
-  && ((value.change_summary === undefined) || isString(value.change_summary))
-  && ((value.publish === undefined) || isBoolean(value.publish))
-  && ((value.default_dataset === undefined) || isDatasetPayload(value.default_dataset));
-
-const isDatasetRowCreateRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && isObject(value.values)
-  && ((value.name === undefined) || isString(value.name));
-
-const isDatasetRowPatchRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && ((value.values === undefined) || isObject(value.values))
-  && ((value.name === undefined) || isString(value.name));
-
-const isBindDefaultDatasetRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value) && isString(value.datasetRowId ?? value.dataset_row_id);
-
-const isRecordingSourceType = (value: unknown): value is 'manual' | 'auto_explore' | 'run_replay' =>
-  value === 'manual' || value === 'auto_explore' || value === 'run_replay';
-
-const isCreateRecordingRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && isString(value.tenant_id)
-  && isString(value.project_id)
-  && isString(value.name)
-  && isRecordingSourceType(value.source_type)
-  && isObject(value.env_profile);
-
-const isRecordingEventItemRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && isString(value.event_type)
-  && ((value.page_url === undefined) || isString(value.page_url))
-  && ((value.locator === undefined) || isLocatorDraftShape(value.locator))
-  && ((value.payload === undefined) || isObject(value.payload))
-  && ((value.captured_at === undefined) || isString(value.captured_at));
-
-const isAppendRecordingEventsRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && Array.isArray(value.events)
-  && value.events.every(isRecordingEventItemRequest);
-
-const isPublishRecordingRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && ((value.name === undefined) || isString(value.name))
-  && ((value.version_label === undefined) || isString(value.version_label))
-  && ((value.change_summary === undefined) || isString(value.change_summary))
-  && ((value.publish === undefined) || isBoolean(value.publish))
-  && ((value.analysis_job_id === undefined) || isString(value.analysis_job_id))
-  && ((value.default_dataset === undefined) || isDatasetPayload(value.default_dataset));
-
-const isExtractTestCaseRequest = (value: unknown): value is Record<string, unknown> =>
-  isObject(value)
-  && ((value.name === undefined) || isString(value.name))
-  && ((value.version_label === undefined) || isString(value.version_label))
-  && ((value.change_summary === undefined) || isString(value.change_summary))
-  && ((value.publish === undefined) || isBoolean(value.publish))
-  && ((value.default_dataset_name === undefined) || isString(value.default_dataset_name));
-
-const normalizeTestCaseCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateTestCaseInput => ({
-  tenantId: String(value.tenant_id),
-  projectId: String(value.project_id),
-  name: String(value.name),
-  plan: value.plan as ControlPlaneCreateTestCaseInput['plan'],
-  envProfile: value.env_profile as ControlPlaneCreateTestCaseInput['envProfile'],
-  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
-  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
-  publish: isBoolean(value.publish) ? value.publish : undefined,
-  defaultDataset: isDatasetPayload(value.default_dataset)
-    ? {
-      name: typeof value.default_dataset.name === 'string' ? value.default_dataset.name : undefined,
-      values: isObject(value.default_dataset.values)
-        ? value.default_dataset.values
-        : undefined,
-    }
-    : undefined,
-});
-
-const normalizeTestCasePatchRequest = (value: Record<string, unknown>): ControlPlaneUpdateTestCaseInput => ({
-  name: typeof value.name === 'string' ? value.name : undefined,
-  status: typeof value.status === 'string'
-    ? value.status as ControlPlaneUpdateTestCaseInput['status']
-    : undefined,
-});
-
-const normalizeTestCaseVersionCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateTestCaseVersionInput => ({
-  plan: value.plan as ControlPlaneCreateTestCaseVersionInput['plan'],
-  envProfile: value.env_profile as ControlPlaneCreateTestCaseVersionInput['envProfile'],
-  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
-  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
-  publish: isBoolean(value.publish) ? value.publish : undefined,
-  defaultDataset: isDatasetPayload(value.default_dataset)
-    ? {
-      name: typeof value.default_dataset.name === 'string' ? value.default_dataset.name : undefined,
-      values: isObject(value.default_dataset.values)
-        ? value.default_dataset.values
-        : undefined,
-    }
-    : undefined,
-});
-
-const normalizeDatasetRowCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateDatasetRowInput => ({
-  name: typeof value.name === 'string' ? value.name : undefined,
-  values: value.values as Record<string, unknown>,
-});
-
-const normalizeDatasetRowPatchRequest = (value: Record<string, unknown>): ControlPlaneUpdateDatasetRowInput => ({
-  name: typeof value.name === 'string' ? value.name : undefined,
-  values: isObject(value.values) ? value.values : undefined,
-});
-
-const normalizeCreateRecordingRequest = (value: Record<string, unknown>): ControlPlaneCreateRecordingInput => ({
-  tenantId: String(value.tenant_id),
-  projectId: String(value.project_id),
-  name: String(value.name),
-  sourceType: String(value.source_type) as ControlPlaneCreateRecordingInput['sourceType'],
-  envProfile: value.env_profile as ControlPlaneCreateRecordingInput['envProfile'],
-  startedAt: typeof value.started_at === 'string' ? value.started_at : undefined,
-  finishedAt: typeof value.finished_at === 'string' ? value.finished_at : undefined,
-});
-
-const normalizeRecordingEventRequests = (value: Record<string, unknown>): ControlPlaneCreateRecordingEventInput[] =>
-  ((value.events as Record<string, unknown>[]) ?? []).map((event) => ({
-    eventType: String(event.event_type),
-    pageUrl: typeof event.page_url === 'string' ? event.page_url : undefined,
-    locator: isLocatorDraftShape(event.locator)
-      ? event.locator as unknown as ControlPlaneCreateRecordingEventInput['locator']
-      : undefined,
-    payload: isObject(event.payload) ? event.payload : undefined,
-    capturedAt: typeof event.captured_at === 'string' ? event.captured_at : undefined,
-  }));
-
-const normalizePublishRecordingRequest = (value: Record<string, unknown>): ControlPlanePublishRecordingInput => ({
-  name: typeof value.name === 'string' ? value.name : undefined,
-  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
-  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
-  publish: isBoolean(value.publish) ? value.publish : undefined,
-  analysisJobId: typeof value.analysis_job_id === 'string' ? value.analysis_job_id : undefined,
-  defaultDataset: isDatasetPayload(value.default_dataset)
-    ? {
-      name: typeof value.default_dataset.name === 'string' ? value.default_dataset.name : undefined,
-      values: isObject(value.default_dataset.values) ? value.default_dataset.values : undefined,
-    }
-    : undefined,
-});
-
-const normalizeExtractTestCaseRequest = (value: Record<string, unknown>): ControlPlaneExtractTestCaseInput => ({
-  name: typeof value.name === 'string' ? value.name : undefined,
-  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
-  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
-  publish: isBoolean(value.publish) ? value.publish : undefined,
-  defaultDatasetName: typeof value.default_dataset_name === 'string' ? value.default_dataset_name : undefined,
-});
-
-const normalizeRegisterAgent = (value: Record<string, unknown>): ControlPlaneRegisterAgentInput => ({
-  agentId: String(value.agentId ?? value.agent_id),
-  tenantId: String(value.tenantId ?? value.tenant_id),
-  projectId: typeof (value.projectId ?? value.project_id) === 'string' ? String(value.projectId ?? value.project_id) : undefined,
-  name: String(value.name),
-  platform: String(value.platform),
-  architecture: String(value.architecture),
-  runtimeKind: String(value.runtimeKind ?? value.runtime_kind),
-  capabilities: (value.capabilities as string[]) ?? [],
-  metadata: isObject(value.metadata) ? value.metadata : undefined,
-  status: typeof value.status === 'string' ? value.status : undefined,
-  maxParallelSlots: isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots)
-    ? Number(value.maxParallelSlots ?? value.max_parallel_slots)
-    : undefined,
-});
-
-const normalizeHeartbeatAgent = (value: Record<string, unknown>): ControlPlaneHeartbeatAgentInput => ({
-  status: typeof value.status === 'string' ? value.status : undefined,
-  capabilities: isStringArray(value.capabilities) ? value.capabilities : undefined,
-  metadata: isObject(value.metadata) ? value.metadata : undefined,
-  maxParallelSlots: isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots)
-    ? Number(value.maxParallelSlots ?? value.max_parallel_slots)
-    : undefined,
-});
-
-const normalizeAcquireLease = (value: Record<string, unknown>): ControlPlaneAcquireLeaseInput => ({
-  supportedJobKinds: (value.supportedJobKinds ?? value.supported_job_kinds) as string[],
-  leaseTtlSeconds: Number(value.leaseTtlSeconds ?? value.lease_ttl_seconds),
-});
-
-const normalizeHeartbeatLease = (value: Record<string, unknown>): ControlPlaneHeartbeatLeaseInput => ({
-  leaseTtlSeconds: Number(value.leaseTtlSeconds ?? value.lease_ttl_seconds),
-});
-
-const buildDecision = (request: StepOverrideRequest): StepControlResponse => ({
-  action: request.action,
-  reason: request.reason,
-  replacement_step: request.replacement_step,
-  resume_after_ms: request.resume_after_ms,
-});
-
 const matchPath = (pathname: string, expression: RegExp): RegExpMatchArray | null => pathname.match(expression);
-
-const toApiRunStatus = (status: string): string => {
-  switch (status) {
-    case 'created':
-      return 'created';
-    case 'queued':
-      return 'queued';
-    case 'passed':
-      return 'succeeded';
-    case 'failed':
-      return 'failed';
-    case 'canceling':
-      return 'canceling';
-    case 'canceled':
-      return 'canceled';
-    default:
-      return 'running';
-  }
-};
-
-const toApiRun = (run: ControlPlaneRunRecord) => ({
-  id: run.runId,
-  tenant_id: run.tenantId,
-  project_id: run.projectId,
-  name: run.name ?? undefined,
-  status: toApiRunStatus(run.status),
-  created_at: run.createdAt ?? run.startedAt ?? run.updatedAt ?? new Date().toISOString(),
-  updated_at: run.updatedAt ?? run.createdAt ?? run.startedAt ?? new Date().toISOString(),
-  summary: {
-    last_event_id: run.lastEventId,
-    started_at: run.startedAt,
-    finished_at: run.finishedAt,
-    mode: run.mode ?? undefined,
-    selection_kind: run.selectionKind ?? undefined,
-  },
-});
-
-const toApiRunItemStatus = (status: string): string => {
-  switch (status) {
-    case 'pending':
-      return 'pending';
-    case 'dispatched':
-      return 'dispatched';
-    case 'passed':
-      return 'passed';
-    case 'failed':
-      return 'failed';
-    case 'canceled':
-      return 'canceled';
-    default:
-      return 'running';
-  }
-};
-
-const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
-  id: runItem.runItemId,
-  run_id: runItem.runId,
-  tenant_id: runItem.tenantId,
-  project_id: runItem.projectId,
-  status: toApiRunItemStatus(runItem.status),
-  attempt_no: runItem.attemptNo,
-  artifacts: [],
-  summary: {
-    job_id: runItem.jobId,
-    job_kind: runItem.jobKind ?? undefined,
-    required_capabilities: runItem.requiredCapabilities ?? undefined,
-    test_case_id: runItem.testCaseId ?? undefined,
-    test_case_version_id: runItem.testCaseVersionId ?? undefined,
-    data_template_version_id: runItem.dataTemplateVersionId ?? undefined,
-    dataset_row_id: runItem.datasetRowId ?? undefined,
-    input_snapshot: runItem.inputSnapshot ?? undefined,
-    source_recording_id: runItem.sourceRecordingId ?? undefined,
-    assigned_agent_id: runItem.assignedAgentId ?? undefined,
-    lease_token: runItem.leaseToken ?? undefined,
-    control_state: runItem.controlState ?? undefined,
-    control_reason: runItem.controlReason ?? undefined,
-  },
-});
-
-const toApiStepEvent = (stepEvent: ControlPlaneStepEventRecord) => ({
-  event_id: stepEvent.eventId,
-  run_id: stepEvent.runId,
-  run_item_id: stepEvent.runItemId,
-  job_id: stepEvent.jobId,
-  tenant_id: stepEvent.tenantId,
-  project_id: stepEvent.projectId,
-  attempt_no: stepEvent.attemptNo,
-  compiled_step_id: stepEvent.compiledStepId,
-  source_step_id: stepEvent.sourceStepId,
-  status: stepEvent.status,
-  started_at: stepEvent.startedAt,
-  finished_at: stepEvent.finishedAt,
-  duration_ms: stepEvent.durationMs,
-  error_code: stepEvent.errorCode,
-  error_message: stepEvent.errorMessage,
-  artifacts: stepEvent.artifacts,
-  extracted_variables: stepEvent.extractedVariables,
-  received_at: stepEvent.receivedAt,
-});
-
-const toApiAgent = (agent: ControlPlaneAgentRecord) => ({
-  agent_id: agent.agentId,
-  tenant_id: agent.tenantId,
-  project_id: agent.projectId,
-  name: agent.name,
-  platform: agent.platform,
-  architecture: agent.architecture,
-  runtime_kind: agent.runtimeKind,
-  status: agent.status,
-  capabilities: agent.capabilities,
-  metadata: agent.metadata,
-  max_parallel_slots: agent.maxParallelSlots,
-  last_heartbeat_at: agent.lastHeartbeatAt,
-  created_at: agent.createdAt,
-  updated_at: agent.updatedAt,
-});
-
-const toApiArtifact = (artifact: ControlPlaneArtifactRecord) => ({
-  artifact_id: artifact.artifactId,
-  tenant_id: artifact.tenantId,
-  project_id: artifact.projectId,
-  run_id: artifact.runId,
-  run_item_id: artifact.runItemId,
-  step_event_id: artifact.stepEventId,
-  job_id: artifact.jobId,
-  artifact_type: artifact.artifactType,
-  storage_uri: artifact.storageUri,
-  content_type: artifact.contentType,
-  size_bytes: artifact.sizeBytes,
-  sha256: artifact.sha256,
-  metadata: artifact.metadata,
-  retention_expires_at: artifact.retentionExpiresAt,
-  created_at: artifact.createdAt,
-});
-
-const toApiPrincipal = (principal: ControlPlanePrincipal) => ({
-  subject_id: principal.subjectId,
-  tenant_id: principal.tenantId,
-  project_ids: principal.projectIds,
-  roles: principal.roles,
-});
-
-const toApiTestCase = (testCase: ControlPlaneTestCaseRecord) => ({
-  id: testCase.testCaseId,
-  tenant_id: testCase.tenantId,
-  project_id: testCase.projectId,
-  data_template_id: testCase.dataTemplateId,
-  name: testCase.name,
-  status: testCase.status,
-  latest_version_id: testCase.latestVersionId,
-  latest_published_version_id: testCase.latestPublishedVersionId,
-  created_by: testCase.createdBy,
-  updated_by: testCase.updatedBy,
-  created_at: testCase.createdAt,
-  updated_at: testCase.updatedAt,
-});
-
-const toApiTestCaseVersion = (version: ControlPlaneTestCaseVersionRecord) => ({
-  id: version.testCaseVersionId,
-  test_case_id: version.testCaseId,
-  tenant_id: version.tenantId,
-  project_id: version.projectId,
-  version_no: version.versionNo,
-  version_label: version.versionLabel,
-  status: version.status,
-  plan: version.plan,
-  env_profile: version.envProfile,
-  data_template_id: version.dataTemplateId,
-  data_template_version_id: version.dataTemplateVersionId,
-  default_dataset_row_id: version.defaultDatasetRowId,
-  source_recording_id: version.sourceRecordingId,
-  source_run_id: version.sourceRunId,
-  derived_from_case_version_id: version.derivedFromCaseVersionId,
-  change_summary: version.changeSummary,
-  created_by: version.createdBy,
-  created_at: version.createdAt,
-});
-
-const toApiTemplateSchema = (schema: ControlPlaneDataTemplateVersionRecord['schema']) => ({
-  fields: schema.fields.map((field) => ({
-    key: field.key,
-    source_type: field.sourceType,
-    value_type: field.valueType,
-    required: field.required,
-  })),
-});
-
-const toApiDataTemplateVersion = (template: ControlPlaneDataTemplateVersionRecord) => ({
-  data_template_id: template.dataTemplateId,
-  data_template_version_id: template.dataTemplateVersionId,
-  test_case_id: template.testCaseId,
-  tenant_id: template.tenantId,
-  project_id: template.projectId,
-  version_no: template.versionNo,
-  schema: toApiTemplateSchema(template.schema),
-  validation_rules: template.validationRules,
-  default_dataset_row_id: template.defaultDatasetRowId,
-  created_by: template.createdBy,
-  created_at: template.createdAt,
-});
-
-const toApiDatasetRow = (datasetRow: ControlPlaneDatasetRowRecord) => ({
-  id: datasetRow.datasetRowId,
-  test_case_id: datasetRow.testCaseId,
-  data_template_version_id: datasetRow.dataTemplateVersionId,
-  tenant_id: datasetRow.tenantId,
-  project_id: datasetRow.projectId,
-  name: datasetRow.name,
-  status: datasetRow.status,
-  values: datasetRow.values,
-  created_by: datasetRow.createdBy,
-  updated_by: datasetRow.updatedBy,
-  created_at: datasetRow.createdAt,
-  updated_at: datasetRow.updatedAt,
-});
-
-const toApiTestCaseBundle = (
-  testCase: ControlPlaneTestCaseRecord,
-  version: ControlPlaneTestCaseVersionRecord,
-  dataTemplateVersion: ControlPlaneDataTemplateVersionRecord,
-  defaultDatasetRow: ControlPlaneDatasetRowRecord,
-) => ({
-  test_case: toApiTestCase(testCase),
-  version: toApiTestCaseVersion(version),
-  data_template: toApiDataTemplateVersion(dataTemplateVersion),
-  default_dataset_row: toApiDatasetRow(defaultDatasetRow),
-});
-
-const toApiRecording = (recording: ControlPlaneRecordingRecord) => ({
-  id: recording.recordingId,
-  tenant_id: recording.tenantId,
-  project_id: recording.projectId,
-  name: recording.name,
-  status: recording.status,
-  source_type: recording.sourceType,
-  env_profile: recording.envProfile,
-  started_at: recording.startedAt,
-  finished_at: recording.finishedAt,
-  created_by: recording.createdBy,
-  created_at: recording.createdAt,
-  updated_at: recording.updatedAt,
-});
-
-const toApiRecordingAnalysisJob = (analysisJob: ControlPlaneRecordingAnalysisJobRecord) => ({
-  id: analysisJob.recordingAnalysisJobId,
-  recording_id: analysisJob.recordingId,
-  tenant_id: analysisJob.tenantId,
-  project_id: analysisJob.projectId,
-  status: analysisJob.status,
-  dsl_plan: analysisJob.dslPlan,
-  structured_plan: analysisJob.structuredPlan,
-  data_template_draft: toApiTemplateSchema(analysisJob.dataTemplateDraft),
-  started_at: analysisJob.startedAt,
-  finished_at: analysisJob.finishedAt,
-  created_by: analysisJob.createdBy,
-  created_at: analysisJob.createdAt,
-});
-
-const toApiDerivedTestCaseBundle = (derived: ControlPlaneDeriveTestCaseResult) => ({
-  derivation_mode: derived.derivationMode,
-  test_case: toApiTestCase(derived.testCase),
-  version: toApiTestCaseVersion(derived.version),
-  data_template: toApiDataTemplateVersion(derived.dataTemplateVersion),
-  default_dataset_row: toApiDatasetRow(derived.defaultDatasetRow),
-});
-
-const toApiLease = (lease: ControlPlaneJobLeaseRecord) => ({
-  lease_id: lease.leaseId,
-  lease_token: lease.leaseToken,
-  job_id: lease.jobId,
-  run_id: lease.runId,
-  run_item_id: lease.runItemId,
-  agent_id: lease.agentId,
-  attempt_no: lease.attemptNo,
-  status: lease.status,
-  acquired_at: lease.acquiredAt,
-  expires_at: lease.expiresAt,
-  heartbeat_at: lease.heartbeatAt,
-  released_at: lease.releasedAt,
-});
-
-const toPaginatedPayload = <T>(page: ControlPlanePage<T>, mapper: (item: T) => unknown) => ({
-  items: page.items.map(mapper),
-  next_cursor: page.nextCursor,
-});
 
 const requiredQuery = (url: URL, name: string): string => {
   const value = url.searchParams.get(name);

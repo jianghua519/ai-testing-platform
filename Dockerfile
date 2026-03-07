@@ -1,4 +1,6 @@
-FROM node:22-bookworm-slim
+# syntax=docker/dockerfile:1.7
+
+FROM node:22-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -14,8 +16,9 @@ COPY apps/web-worker/package.json ./apps/web-worker/package.json
 COPY apps/control-plane/package.json ./apps/control-plane/package.json
 COPY apps/ai-orchestrator/package.json ./apps/ai-orchestrator/package.json
 
-RUN npm ci
-RUN npx playwright install --with-deps chromium
+RUN --mount=type=cache,target=/root/.npm npm ci
+
+FROM deps AS build
 
 COPY apps ./apps
 COPY packages ./packages
@@ -23,8 +26,33 @@ COPY scripts ./scripts
 COPY contracts ./contracts
 COPY docs ./docs
 COPY README.md ./
+
 RUN npm run build
+
+FROM node:22-bookworm-slim AS app-runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 python3-yaml \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app ./
 
 EXPOSE 8080
 
 CMD ["node", "./scripts/start_control_plane_server.mjs"]
+
+FROM mcr.microsoft.com/playwright:v1.58.2-noble AS playwright-runtime
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 python3-yaml \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app ./
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+CMD ["sleep", "infinity"]

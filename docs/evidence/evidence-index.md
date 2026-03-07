@@ -2,7 +2,7 @@
 title: 测试举证索引
 status: active
 owner: qa
-last_updated: 2026-03-07
+last_updated: 2026-03-08
 summary: 仓库验证执行产生的测试举证记录索引。
 ---
 
@@ -73,3 +73,9 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-223500-test-asset-phase1-compose-smoke-evidence.md` - Phase 1 测试资产域真实 smoke、版本化执行与 MinIO artifact 验证 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-235900-test-asset-phase2-compose-smoke-evidence.md` - Phase 2 recording 资产、分析发布、执行提取与 MinIO artifact 验证 的测试举证记录。
+
+- `2026-03-08`: `docs/evidence/records/20260308-013640-postgres-reset-playwright-refactor-evidence.md` - 默认 PostgreSQL 基线重建、官方 Playwright 镜像验证与大文件重构 的测试举证记录。
+
+- `2026-03-08`: `docs/evidence/records/20260308-011500-ai-orchestrator-phase1-compose-smoke-evidence.md` - ai-orchestrator Phase 1 compose smoke 的测试举证记录。
+
+- `2026-03-08`: `docs/evidence/records/20260308-021500-ai-orchestrator-postgres-persistence-smoke-evidence.md` - ai-orchestrator PostgreSQL 持久化与重启恢复 smoke 的测试举证记录。

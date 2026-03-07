@@ -8,6 +8,7 @@
   "scripts": {
     "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter apps/web-worker apps/control-plane apps/ai-orchestrator",
     "build": "npm run typecheck",
+    "compose:postgres:reset": "node ./scripts/reset_compose_postgres.mjs",
     "ai-orchestrator:serve": "node ./scripts/start_ai_orchestrator_server.mjs",
     "ai-orchestrator:migrate:postgres": "node ./scripts/migrate_ai_orchestrator_postgres.mjs",
     "control-plane:serve": "node ./scripts/start_control_plane_server.mjs",

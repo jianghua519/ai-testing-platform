@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { startControlPlaneServer } from '../apps/control-plane/dist/index.js';
 
 const port = Number.parseInt(process.env.PORT ?? '8080', 10);

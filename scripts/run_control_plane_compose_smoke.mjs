@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readdir } from 'node:fs/promises';
 import { Pool } from 'pg';
 import {
   DefaultResultEnvelopeFactory,
@@ -8,6 +9,7 @@ import { DefaultDslCompiler } from '../packages/dsl-compiler/dist/index.js';
 import { buildTenantTable, createAuthHeaders, seedProjectMemberships } from './lib/control_plane_auth.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const MIGRATION_FILE_PATTERN = /^\d+_.+\.sql$/;
 
 const baseUrl = process.env.CONTROL_PLANE_BASE_URL ?? 'http://control-plane:8080';
 const connectionString = process.env.CONTROL_PLANE_DATABASE_URL;
@@ -335,6 +337,7 @@ try {
   );
 
   const [
+    expectedMigrations,
     health,
     migrationsPage,
     runsPage1,
@@ -346,6 +349,7 @@ try {
     runArtifactsPage,
     jobEvents,
   ] = await Promise.all([
+    readdir(new URL('../apps/control-plane/sql/', import.meta.url)).then((entries) => entries.filter((entry) => MIGRATION_FILE_PATTERN.test(entry))),
     getJson(`${baseUrl}/healthz`),
     getJson(`${baseUrl}/api/v1/internal/migrations`),
     getJson(`${baseUrl}/api/v1/runs?tenant_id=${scenarios[0].tenantId}&project_id=${scenarios[0].projectId}&limit=2`, authHeaders),
@@ -410,7 +414,10 @@ try {
   assertOk(decisionResponse.status === 200 && decisionResponse.body.action === 'replace', 'step decision did not return replace');
   assertOk(firstPost.status === 202, `first step post expected 202, got ${firstPost.status}`);
   assertOk(duplicatePost.status === 200 && duplicatePost.body?.duplicate === true, 'duplicate event was not deduplicated');
-  assertOk(migrationsPage.body.items.length === 7, `expected 7 migrations, got ${migrationsPage.body.items.length}`);
+  assertOk(
+    migrationsPage.body.items.length === expectedMigrations.length,
+    `expected ${expectedMigrations.length} migrations, got ${migrationsPage.body.items.length}`,
+  );
   assertOk(runsPage1.body.items.length === 2 && runsPage1.body.next_cursor, 'runs page 1 pagination failed');
   assertOk(runsPage2.body.items.length === 2, 'runs page 2 expected 2 items');
   assertOk(runItemPage1.body.items.length === 2 && runItemPage1.body.next_cursor, 'run items page 1 pagination failed');

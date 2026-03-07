@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { Pool } from 'pg';
 import { runControlPlanePostgresMigrations } from '../apps/control-plane/dist/index.js';
 

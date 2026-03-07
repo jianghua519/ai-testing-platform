@@ -26,7 +26,9 @@ services:
       - minio-data:/data
 
   control-plane:
-    build: .
+    build:
+      context: .
+      target: app-runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,7 +67,9 @@ services:
       retries: 30
 
   ai-orchestrator:
-    build: .
+    build:
+      context: .
+      target: app-runtime
     depends_on:
       control-plane:
         condition: service_healthy
@@ -101,7 +105,9 @@ services:
       retries: 30
 
   tools:
-    build: .
+    build:
+      context: .
+      target: playwright-runtime
     depends_on:
       postgres:
         condition: service_healthy
