@@ -45,3 +45,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-093158-control-plane-evidence.md` - control-plane持久化和结果幂等 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-094027-smoke-run-evidence.md` - 真实浏览器smoke run 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-095018-smoke-run-evidence.md` - 真实浏览器交互 smoke run 扩展 的测试举证记录。

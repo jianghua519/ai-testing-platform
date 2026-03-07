@@ -30,7 +30,7 @@
 - `npm install`
 - `npm run typecheck`
 - `npm run playwright:install`
-- `npm run smoke:web:real`
+- `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`

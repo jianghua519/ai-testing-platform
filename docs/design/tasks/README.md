@@ -49,3 +49,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-093158-control-plane-design-task.md` - control-plane持久化和结果幂等
 
 - `2026-03-07`: `docs/design/tasks/20260307-094027-smoke-run-design-task.md` - 真实浏览器smoke run
+
+- `2026-03-07`: `docs/design/tasks/20260307-095018-smoke-run-design-task.md` - 真实浏览器交互 smoke run 扩展

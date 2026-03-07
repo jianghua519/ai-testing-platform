@@ -7,6 +7,7 @@ import { GroupStepExecutor } from '../actions/group-executor.js';
 import { InputStepExecutor } from '../actions/input-executor.js';
 import { LoopStepExecutor } from '../actions/loop-executor.js';
 import { OpenStepExecutor } from '../actions/open-executor.js';
+import { UploadStepExecutor } from '../actions/upload-executor.js';
 import { WaitStepExecutor } from '../actions/wait-executor.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { BasicStepExecutorRegistry } from './registry.js';
@@ -20,6 +21,7 @@ const createDefaultRegistry = (): StepExecutorRegistry => {
   registry.register(new OpenStepExecutor());
   registry.register(new ClickStepExecutor());
   registry.register(new InputStepExecutor());
+  registry.register(new UploadStepExecutor());
   registry.register(new WaitStepExecutor());
   registry.register(new AssertStepExecutor());
   registry.register(new ExtractStepExecutor());
