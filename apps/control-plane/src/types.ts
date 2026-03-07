@@ -1,4 +1,4 @@
-import type { EnvProfile, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
+import type { EnvProfile, LocatorDraft, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
 import type {
   ResultReportedEnvelope,
   StepResultReportedEnvelope,
@@ -311,6 +311,36 @@ export interface ControlPlaneTestCaseVersionRecord {
   createdAt: string;
 }
 
+export interface ControlPlaneRecordingRecord {
+  recordingId: string;
+  tenantId: string;
+  projectId: string;
+  name: string;
+  status: string;
+  sourceType: 'manual' | 'auto_explore' | 'run_replay';
+  envProfile: EnvProfile;
+  startedAt: string;
+  finishedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ControlPlaneRecordingAnalysisJobRecord {
+  recordingAnalysisJobId: string;
+  recordingId: string;
+  tenantId: string;
+  projectId: string;
+  status: string;
+  dslPlan: WebStepPlanDraft | null;
+  structuredPlan: Record<string, unknown>;
+  dataTemplateDraft: ControlPlaneTemplateSchemaRecord;
+  startedAt: string;
+  finishedAt: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
 export interface ControlPlaneCreateTestCaseInput {
   tenantId: string;
   projectId: string;
@@ -320,6 +350,9 @@ export interface ControlPlaneCreateTestCaseInput {
   versionLabel?: string;
   changeSummary?: string;
   publish?: boolean;
+  sourceRecordingId?: string;
+  sourceRunId?: string;
+  derivedFromCaseVersionId?: string;
   defaultDataset?: {
     name?: string;
     values?: Record<string, unknown>;
@@ -344,6 +377,9 @@ export interface ControlPlaneCreateTestCaseVersionInput {
   versionLabel?: string;
   changeSummary?: string;
   publish?: boolean;
+  sourceRecordingId?: string;
+  sourceRunId?: string;
+  derivedFromCaseVersionId?: string;
   defaultDataset?: {
     name?: string;
     values?: Record<string, unknown>;
@@ -365,6 +401,52 @@ export interface ControlPlaneCreateDatasetRowInput {
 export interface ControlPlaneUpdateDatasetRowInput {
   name?: string;
   values?: Record<string, unknown>;
+}
+
+export interface ControlPlaneCreateRecordingInput {
+  tenantId: string;
+  projectId: string;
+  name: string;
+  sourceType: 'manual' | 'auto_explore' | 'run_replay';
+  envProfile: EnvProfile;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface ControlPlaneCreateRecordingEventInput {
+  eventType: string;
+  pageUrl?: string;
+  locator?: LocatorDraft;
+  payload?: Record<string, unknown>;
+  capturedAt?: string;
+}
+
+export interface ControlPlanePublishRecordingInput {
+  name?: string;
+  versionLabel?: string;
+  changeSummary?: string;
+  publish?: boolean;
+  analysisJobId?: string;
+  defaultDataset?: {
+    name?: string;
+    values?: Record<string, unknown>;
+  };
+}
+
+export interface ControlPlaneExtractTestCaseInput {
+  name?: string;
+  versionLabel?: string;
+  changeSummary?: string;
+  publish?: boolean;
+  defaultDatasetName?: string;
+}
+
+export interface ControlPlaneDeriveTestCaseResult {
+  derivationMode: 'new_case' | 'new_version';
+  testCase: ControlPlaneTestCaseRecord;
+  version: ControlPlaneTestCaseVersionRecord;
+  dataTemplateVersion: ControlPlaneDataTemplateVersionRecord;
+  defaultDatasetRow: ControlPlaneDatasetRowRecord;
 }
 
 export interface ControlPlaneEnqueueWebRunInput {
@@ -455,6 +537,30 @@ export interface ControlPlaneSchedulingStore {
 
 export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> {
   resolvePrincipal?(actor: ControlPlaneAuthenticatedActor): Promise<ControlPlanePrincipal>;
+  createRecording?(
+    input: ControlPlaneCreateRecordingInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneRecordingRecord>;
+  getRecording?(recordingId: string): Promise<ControlPlaneRecordingRecord | undefined>;
+  appendRecordingEvents?(
+    recordingId: string,
+    events: ControlPlaneCreateRecordingEventInput[],
+    actor: { subjectId: string },
+  ): Promise<{ recording: ControlPlaneRecordingRecord; appendedCount: number } | undefined>;
+  analyzeRecordingDsl?(
+    recordingId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneRecordingAnalysisJobRecord | undefined>;
+  publishRecordingAsTestCase?(
+    recordingId: string,
+    input: ControlPlanePublishRecordingInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseResult | undefined>;
+  extractTestCaseFromRunItem?(
+    runItemId: string,
+    input: ControlPlaneExtractTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDeriveTestCaseResult | undefined>;
   createTestCase?(
     input: ControlPlaneCreateTestCaseInput,
     actor: { subjectId: string },

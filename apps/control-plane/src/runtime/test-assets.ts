@@ -1,4 +1,4 @@
-import type { EnvProfile, WebStepDraft, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
+import type { AssertionDraft, AssertionOperator, EnvProfile, LocatorDraft, WebStepDraft, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
 import type {
   ControlPlaneTemplateFieldRecord,
   ControlPlaneTemplateSchemaRecord,
@@ -201,3 +201,219 @@ export const buildExecutionInputSnapshot = (
   ...datasetValues,
   ...(variableContext ?? {}),
 });
+
+export const filterDatasetValuesForSchema = (
+  schema: ControlPlaneTemplateSchemaRecord,
+  values: Record<string, unknown>,
+): Record<string, unknown> => Object.fromEntries(
+  schema.fields
+    .filter((field) => Object.prototype.hasOwnProperty.call(values, field.key))
+    .map((field) => [field.key, values[field.key]]),
+);
+
+interface RecordingAnalysisEvent {
+  eventType: string;
+  pageUrl?: string | null;
+  locator?: LocatorDraft | null;
+  payload?: Record<string, unknown>;
+}
+
+const isLocatorDraft = (value: unknown): value is LocatorDraft =>
+  typeof value === 'object'
+  && value !== null
+  && typeof (value as LocatorDraft).strategy === 'string'
+  && typeof (value as LocatorDraft).value === 'string';
+
+const isAssertionOperator = (value: unknown): value is AssertionOperator =>
+  value === 'visible'
+  || value === 'hidden'
+  || value === 'text_equals'
+  || value === 'text_contains'
+  || value === 'value_equals'
+  || value === 'url_contains'
+  || value === 'attr_equals';
+
+const resolveEventInput = (
+  eventType: string,
+  payload: Record<string, unknown>,
+): WebStepDraft['input'] | undefined => {
+  const explicitSource = typeof payload.source === 'string' ? payload.source : undefined;
+  const fallbackRefKey = eventType === 'upload' ? 'file_key' : 'variable_key';
+  const fallbackSource = eventType === 'upload' ? 'file_ref' : 'variable_ref';
+
+  if (explicitSource === 'literal' && typeof payload.value === 'string') {
+    return { source: 'literal', value: payload.value };
+  }
+  if ((explicitSource === 'variable_ref' || explicitSource === 'file_ref') && typeof payload.ref === 'string') {
+    return { source: explicitSource, ref: payload.ref };
+  }
+  if (typeof payload[fallbackRefKey] === 'string') {
+    return { source: fallbackSource, ref: String(payload[fallbackRefKey]) };
+  }
+  if (typeof payload.value === 'string') {
+    return { source: 'literal', value: payload.value };
+  }
+  return undefined;
+};
+
+const resolveEventAssertions = (
+  locator: LocatorDraft | null | undefined,
+  payload: Record<string, unknown>,
+): AssertionDraft[] => {
+  const payloadLocator = isLocatorDraft(payload.locator) ? payload.locator : undefined;
+  const assertionLocator = payloadLocator ?? locator ?? undefined;
+  const toAssertionDraft = (assertion: Record<string, unknown>): AssertionDraft | null => {
+    if (!isAssertionOperator(assertion.operator)) {
+      return null;
+    }
+
+    return {
+      operator: assertion.operator,
+      expected: typeof assertion.expected === 'string' ? assertion.expected : undefined,
+      attrName: typeof assertion.attrName === 'string'
+        ? assertion.attrName
+        : typeof assertion.attr_name === 'string'
+          ? assertion.attr_name
+          : undefined,
+      locator: isLocatorDraft(assertion.locator)
+        ? assertion.locator
+        : assertionLocator,
+    };
+  };
+
+  if (Array.isArray(payload.assertions)) {
+    return payload.assertions
+      .filter((assertion): assertion is Record<string, unknown> => typeof assertion === 'object' && assertion !== null)
+      .map(toAssertionDraft)
+      .filter((assertion): assertion is AssertionDraft => assertion !== null);
+  }
+
+  if (!isAssertionOperator(payload.operator)) {
+    return [];
+  }
+
+  return [{
+    operator: payload.operator,
+    expected: typeof payload.expected === 'string' ? payload.expected : undefined,
+    attrName: typeof payload.attrName === 'string'
+      ? payload.attrName
+      : typeof payload.attr_name === 'string'
+        ? payload.attr_name
+        : undefined,
+    locator: assertionLocator,
+  }];
+};
+
+export const analyzeRecordingEvents = (
+  recording: {
+    recordingId: string;
+    name: string;
+    envProfile: EnvProfile;
+  },
+  events: RecordingAnalysisEvent[],
+): {
+  dslPlan: WebStepPlanDraft;
+  structuredPlan: Record<string, unknown>;
+  dataTemplateDraft: ControlPlaneTemplateSchemaRecord;
+} => {
+  const steps = events.map<WebStepDraft>((event, index) => {
+    const stepId = `recording-step-${index + 1}`;
+    const payload = event.payload ?? {};
+    const locator = event.locator ?? null;
+
+    switch (event.eventType) {
+      case 'open':
+        return {
+          stepId,
+          name: `打开页面 ${index + 1}`,
+          kind: 'navigation',
+          action: 'open',
+          input: {
+            source: 'literal',
+            value: typeof payload.url === 'string'
+              ? payload.url
+              : typeof event.pageUrl === 'string'
+                ? event.pageUrl
+                : '',
+          },
+        };
+      case 'click':
+        return {
+          stepId,
+          name: `点击元素 ${index + 1}`,
+          kind: 'interaction',
+          action: 'click',
+          locator: locator ?? undefined,
+        };
+      case 'input':
+        return {
+          stepId,
+          name: `输入内容 ${index + 1}`,
+          kind: 'interaction',
+          action: 'input',
+          locator: locator ?? undefined,
+          input: resolveEventInput('input', payload),
+        };
+      case 'upload':
+        return {
+          stepId,
+          name: `上传文件 ${index + 1}`,
+          kind: 'interaction',
+          action: 'upload',
+          locator: locator ?? undefined,
+          input: resolveEventInput('upload', payload),
+        };
+      case 'assert':
+        return {
+          stepId,
+          name: `断言结果 ${index + 1}`,
+          kind: 'assertion',
+          action: 'assert',
+          assertions: resolveEventAssertions(locator, payload),
+        };
+      case 'wait':
+        return {
+          stepId,
+          name: `等待 ${index + 1}`,
+          kind: 'control',
+          action: 'wait',
+          timeoutMs: typeof payload.timeoutMs === 'number'
+            ? payload.timeoutMs
+            : typeof payload.timeout_ms === 'number'
+              ? Number(payload.timeout_ms)
+              : undefined,
+        };
+      default:
+        throw new ControlPlaneRequestError(400, 'UNSUPPORTED_RECORDING_EVENT', `unsupported recording event type: ${event.eventType}`);
+    }
+  });
+
+  const dslPlan: WebStepPlanDraft = {
+    planId: `recording-${recording.recordingId}`,
+    planName: recording.name,
+    version: 'v1',
+    browserProfile: recording.envProfile.browserProfile,
+    defaults: {
+      artifactPolicy: {
+        screenshot: 'always',
+        trace: 'always',
+        video: 'none',
+        domSnapshot: false,
+        networkCapture: false,
+      },
+    },
+    steps,
+  };
+  const dataTemplateDraft = deriveTemplateSchemaFromPlan(dslPlan);
+
+  return {
+    dslPlan,
+    structuredPlan: {
+      source: 'recording',
+      recording_id: recording.recordingId,
+      step_count: steps.length,
+      steps,
+    },
+    dataTemplateDraft,
+  };
+};

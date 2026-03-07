@@ -71,3 +71,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-191725-control-plane-post-api-v1-runs-evidence.md` - control-plane 公开 POST /api/v1/runs 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-223500-test-asset-phase1-compose-smoke-evidence.md` - Phase 1 测试资产域真实 smoke、版本化执行与 MinIO artifact 验证 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-235900-test-asset-phase2-compose-smoke-evidence.md` - Phase 2 recording 资产、分析发布、执行提取与 MinIO artifact 验证 的测试举证记录。

@@ -391,6 +391,120 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/recordings:
+    post:
+      tags: [TestAssets]
+      summary: Create a recording asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingCreateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/recordings/{recording_id}:
+    get:
+      tags: [TestAssets]
+      summary: Get a recording asset
+      parameters:
+        - in: path
+          name: recording_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recording"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/recordings/{recording_id}/events:
+    post:
+      tags: [TestAssets]
+      summary: Append ordered recording events
+      parameters:
+        - in: path
+          name: recording_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingEventsAppendRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingEventsAppendResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/recordings/{recording_id}:analyze-dsl:
+    post:
+      tags: [TestAssets]
+      summary: Analyze recording events into a DSL plan draft
+      parameters:
+        - in: path
+          name: recording_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingAnalysisJob"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/recordings/{recording_id}:publish-test-case:
+    post:
+      tags: [TestAssets]
+      summary: Publish analyzed recording output as a test case
+      parameters:
+        - in: path
+          name: recording_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingPublishRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseBundle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/runs:
     post:
       tags: [Runs]
@@ -529,6 +643,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/run-items/{run_item_id}:extract-test-case:
+    post:
+      tags: [TestAssets]
+      summary: Derive a draft test case asset from a completed run item
+      parameters:
+        - in: path
+          name: run_item_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractTestCaseRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DerivedTestCaseBundle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/agent/jobs/{job_id}/steps/{source_step_id}:decide:
     post:
       tags: [Agents]
@@ -1430,6 +1571,141 @@ components:
       type: object
       required: [test_case, version, data_template, default_dataset_row]
       properties:
+        test_case:
+          $ref: "#/components/schemas/TestCase"
+        version:
+          $ref: "#/components/schemas/TestCaseVersion"
+        data_template:
+          $ref: "#/components/schemas/DataTemplateVersion"
+        default_dataset_row:
+          $ref: "#/components/schemas/DatasetRow"
+    RecordingCreateRequest:
+      type: object
+      required: [tenant_id, project_id, name, source_type, env_profile]
+      properties:
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        source_type:
+          type: string
+          enum: [manual, auto_explore, run_replay]
+        env_profile:
+          type: object
+          additionalProperties: true
+        started_at: { $ref: "#/components/schemas/ISO8601" }
+        finished_at: { $ref: "#/components/schemas/ISO8601" }
+    Recording:
+      type: object
+      required: [id, tenant_id, project_id, name, status, source_type, env_profile, started_at, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string }
+        status:
+          type: string
+          enum: [draft, analyzed, published]
+        source_type:
+          type: string
+          enum: [manual, auto_explore, run_replay]
+        env_profile:
+          type: object
+          additionalProperties: true
+        started_at: { $ref: "#/components/schemas/ISO8601" }
+        finished_at: { $ref: "#/components/schemas/ISO8601" }
+        created_by: { $ref: "#/components/schemas/UUID" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+        updated_at: { $ref: "#/components/schemas/ISO8601" }
+    RecordingEventLocator:
+      type: object
+      required: [strategy, value]
+      properties:
+        strategy:
+          type: string
+          enum: [role, text, label, placeholder, test_id, css, xpath]
+        value:
+          type: string
+          minLength: 1
+        options:
+          type: object
+          additionalProperties: true
+    RecordingEventItem:
+      type: object
+      required: [event_type]
+      properties:
+        event_type: { type: string, minLength: 1 }
+        page_url: { type: string, minLength: 1 }
+        locator:
+          $ref: "#/components/schemas/RecordingEventLocator"
+        payload:
+          type: object
+          additionalProperties: true
+        captured_at: { $ref: "#/components/schemas/ISO8601" }
+    RecordingEventsAppendRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordingEventItem"
+    RecordingEventsAppendResponse:
+      type: object
+      required: [recording, appended_count]
+      properties:
+        recording:
+          $ref: "#/components/schemas/Recording"
+        appended_count:
+          type: integer
+          minimum: 0
+    RecordingAnalysisJob:
+      type: object
+      required: [id, recording_id, tenant_id, project_id, status, structured_plan, data_template_draft, started_at, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        recording_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        status:
+          type: string
+          enum: [succeeded]
+        dsl_plan:
+          type: object
+          additionalProperties: true
+        structured_plan:
+          type: object
+          additionalProperties: true
+        data_template_draft:
+          $ref: "#/components/schemas/DataTemplateSchema"
+        started_at: { $ref: "#/components/schemas/ISO8601" }
+        finished_at: { $ref: "#/components/schemas/ISO8601" }
+        created_by: { $ref: "#/components/schemas/UUID" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+    RecordingPublishRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        version_label: { type: string }
+        change_summary: { type: string }
+        publish: { type: boolean }
+        analysis_job_id: { $ref: "#/components/schemas/UUID" }
+        default_dataset:
+          $ref: "#/components/schemas/DatasetPayload"
+    ExtractTestCaseRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        version_label: { type: string }
+        change_summary: { type: string }
+        publish: { type: boolean }
+        default_dataset_name: { type: string, minLength: 1, maxLength: 200 }
+    DerivedTestCaseBundle:
+      type: object
+      required: [derivation_mode, test_case, version, data_template, default_dataset_row]
+      properties:
+        derivation_mode:
+          type: string
+          enum: [new_case, new_version]
         test_case:
           $ref: "#/components/schemas/TestCase"
         version:

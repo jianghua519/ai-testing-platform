@@ -5,11 +5,14 @@ import type {
   ControlPlaneAcquireLeaseResult,
   ControlPlaneArtifactRecord,
   ControlPlaneAuthenticatedActor,
+  ControlPlaneCreateRecordingEventInput,
+  ControlPlaneCreateRecordingInput,
   ControlPlaneCreateDatasetRowInput,
   ControlPlaneCreateTestCaseInput,
   ControlPlaneCreateTestCaseResult,
   ControlPlaneCreateTestCaseVersionInput,
   ControlPlaneCreateTestCaseVersionResult,
+  ControlPlaneDeriveTestCaseResult,
   ControlPlaneCompleteLeaseInput,
   ControlPlaneDataTemplateVersionRecord,
   ControlPlaneDatasetRowRecord,
@@ -20,6 +23,7 @@ import type {
   ControlPlaneHeartbeatLeaseInput,
   ControlPlaneJobLeaseRecord,
   ControlPlaneAgentRecord,
+  ControlPlaneExtractTestCaseInput,
   ControlPlaneListArtifactsQuery,
   ControlPlaneListDatasetRowsQuery,
   ControlPlaneListExpiredArtifactsQuery,
@@ -31,7 +35,10 @@ import type {
   ControlPlaneMigrationRecord,
   ControlPlanePage,
   ControlPlanePrincipal,
+  ControlPlanePublishRecordingInput,
   ControlPlaneRegisterAgentInput,
+  ControlPlaneRecordingAnalysisJobRecord,
+  ControlPlaneRecordingRecord,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneStateSnapshot,
@@ -45,7 +52,7 @@ import type {
   RecordRunnerEventResult,
   RunnerResultEnvelope,
 } from '../types.js';
-import type { ArtifactReference, CompiledStep, EnvProfile, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
+import type { ArtifactReference, CompiledStep, EnvProfile, LocatorDraft, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
 import type {
   ResultReportedEnvelope,
   StepResultReportedEnvelope,
@@ -60,10 +67,12 @@ import { buildWebRunRequiredCapabilities, normalizeCapabilities } from './job-ca
 import { decodeCursor, encodeCursor } from './pagination.js';
 import { buildTenantBusinessSchemaSql, quotePostgresIdentifier } from './postgres-schema.js';
 import {
+  analyzeRecordingEvents,
   ControlPlaneRequestError,
   buildExecutionInputSnapshot,
   deriveTemplateSchemaFromPlan,
   ensureDefaultDatasetValues,
+  filterDatasetValuesForSchema,
   validateDatasetValues,
 } from './test-assets.js';
 
@@ -187,6 +196,19 @@ interface QueuedRunItemRow {
   job_payload_json: WebWorkerJob | string;
 }
 
+interface DerivableRunItemRow {
+  run_item_id: string;
+  run_id: string;
+  tenant_id: string;
+  project_id: string;
+  status: string;
+  test_case_id: string | null;
+  test_case_version_id: string | null;
+  input_snapshot_json: Record<string, unknown> | string;
+  source_recording_id: string | null;
+  job_payload_json: WebWorkerJob | string;
+}
+
 interface AgentRow {
   agent_id: string;
   tenant_id: string;
@@ -249,6 +271,7 @@ interface EntityLocatorRow {
   run_item_id?: string | null;
   job_id?: string | null;
   agent_id?: string | null;
+  recording_id?: string | null;
   test_case_id?: string | null;
   test_case_version_id?: string | null;
   data_template_id?: string | null;
@@ -293,6 +316,47 @@ interface TestCaseVersionRow {
   source_run_id: string | null;
   derived_from_case_version_id: string | null;
   change_summary: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+interface RecordingRow {
+  recording_id: string;
+  tenant_id: string;
+  project_id: string;
+  name: string;
+  status: string;
+  source_type: ControlPlaneRecordingRecord['sourceType'];
+  env_profile_json: EnvProfile | string;
+  started_at: string;
+  finished_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RecordingEventRow {
+  recording_event_id: string;
+  recording_id: string;
+  seq_no: number;
+  event_type: string;
+  page_url: string | null;
+  locator_json: Record<string, unknown> | string | null;
+  payload_json: Record<string, unknown> | string;
+  captured_at: string;
+}
+
+interface RecordingAnalysisJobRow {
+  recording_analysis_job_id: string;
+  recording_id: string;
+  tenant_id: string;
+  project_id: string;
+  status: string;
+  dsl_plan_json: WebStepPlanDraft | string | null;
+  structured_plan_json: Record<string, unknown> | string;
+  data_template_draft_json: ControlPlaneRecordingAnalysisJobRecord['dataTemplateDraft'] | string;
+  started_at: string;
+  finished_at: string | null;
   created_by: string | null;
   created_at: string;
 }
@@ -349,6 +413,15 @@ const parseJsonColumn = <T>(value: T | string | null): T | null => {
 };
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+const isLocatorDraftRecord = (value: unknown): value is LocatorDraft =>
+  isObjectRecord(value)
+  && typeof value.strategy === 'string'
+  && typeof value.value === 'string';
+
+const parseLocatorColumn = (value: Record<string, unknown> | string | null): LocatorDraft | null => {
+  const parsed = parseJsonColumn<Record<string, unknown>>(value);
+  return isLocatorDraftRecord(parsed) ? parsed : null;
+};
 
 const isArtifactReference = (value: unknown): value is ArtifactReference =>
   typeof value === 'object'
@@ -561,6 +634,36 @@ const mapTestCaseVersion = (row: TestCaseVersionRow): ControlPlaneTestCaseVersio
   createdAt: row.created_at,
 });
 
+const mapRecording = (row: RecordingRow): ControlPlaneRecordingRecord => ({
+  recordingId: row.recording_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  name: row.name,
+  status: row.status,
+  sourceType: row.source_type,
+  envProfile: parseJsonColumn<EnvProfile>(row.env_profile_json) as EnvProfile,
+  startedAt: row.started_at,
+  finishedAt: row.finished_at,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapRecordingAnalysisJob = (row: RecordingAnalysisJobRow): ControlPlaneRecordingAnalysisJobRecord => ({
+  recordingAnalysisJobId: row.recording_analysis_job_id,
+  recordingId: row.recording_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  status: row.status,
+  dslPlan: parseJsonColumn<WebStepPlanDraft>(row.dsl_plan_json),
+  structuredPlan: parseJsonColumn<Record<string, unknown>>(row.structured_plan_json) ?? {},
+  dataTemplateDraft: parseJsonColumn<ControlPlaneRecordingAnalysisJobRecord['dataTemplateDraft']>(row.data_template_draft_json) ?? { fields: [] },
+  startedAt: row.started_at,
+  finishedAt: row.finished_at,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+});
+
 const mapDataTemplateVersion = (row: DataTemplateVersionRow): ControlPlaneDataTemplateVersionRecord => ({
   dataTemplateId: row.data_template_id,
   dataTemplateVersionId: row.data_template_version_id,
@@ -688,6 +791,359 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
     return listControlPlanePostgresMigrations(this.pool);
+  }
+
+  async createRecording(
+    input: ControlPlaneCreateRecordingInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneRecordingRecord> {
+    const now = new Date().toISOString();
+    const recordingId = randomUUID();
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(input.tenantId, client);
+      const recordingsTable = this.tableName(tenantSchema, 'recordings');
+      await client.query(
+        `insert into ${recordingsTable} (
+           recording_id, tenant_id, project_id, name, status, source_type, env_profile_json,
+           started_at, finished_at, created_by, created_at, updated_at
+         ) values (
+           $1, $2, $3, $4, 'draft', $5, $6::jsonb, $7, $8, $9, $10, $10
+         )`,
+        [
+          recordingId,
+          input.tenantId,
+          input.projectId,
+          input.name,
+          input.sourceType,
+          JSON.stringify(input.envProfile),
+          input.startedAt ?? now,
+          input.finishedAt ?? null,
+          actor.subjectId,
+          now,
+        ],
+      );
+      await this.upsertRecordingLocator(client, {
+        recordingId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+      });
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return {
+      recordingId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      name: input.name,
+      status: 'draft',
+      sourceType: input.sourceType,
+      envProfile: input.envProfile,
+      startedAt: input.startedAt ?? now,
+      finishedAt: input.finishedAt ?? null,
+      createdBy: actor.subjectId,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  async getRecording(recordingId: string): Promise<ControlPlaneRecordingRecord | undefined> {
+    const locator = await this.getRecordingLocator(recordingId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const recordingsTable = this.tableName(locator.tenant_id, 'recordings');
+    const result = await this.pool.query<RecordingRow>(
+      `select recording_id, tenant_id, project_id, name, status, source_type, env_profile_json,
+              started_at, finished_at, created_by, created_at, updated_at
+       from ${recordingsTable}
+       where recording_id = $1
+       limit 1`,
+      [recordingId],
+    );
+    return result.rows[0] ? mapRecording(result.rows[0]) : undefined;
+  }
+
+  async appendRecordingEvents(
+    recordingId: string,
+    events: ControlPlaneCreateRecordingEventInput[],
+    actor: { subjectId: string },
+  ): Promise<{ recording: ControlPlaneRecordingRecord; appendedCount: number } | undefined> {
+    const recording = await this.getRecording(recordingId);
+    if (!recording) {
+      return undefined;
+    }
+    if (recording.status === 'published') {
+      throw new ControlPlaneRequestError(409, 'RECORDING_ALREADY_PUBLISHED', 'recording is already published');
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(recording.tenantId, client);
+      const eventsTable = this.tableName(tenantSchema, 'recording_events');
+      const recordingsTable = this.tableName(tenantSchema, 'recordings');
+      const seqResult = await client.query<{ max_seq_no: number | null }>(
+        `select max(seq_no)::int as max_seq_no
+         from ${eventsTable}
+         where recording_id = $1`,
+        [recordingId],
+      );
+      let nextSeqNo = seqResult.rows[0]?.max_seq_no ?? 0;
+      const now = new Date().toISOString();
+
+      for (const event of events) {
+        nextSeqNo += 1;
+        await client.query(
+          `insert into ${eventsTable} (
+             recording_event_id, recording_id, seq_no, event_type, page_url, locator_json, payload_json, captured_at
+           ) values (
+             $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8
+           )`,
+          [
+            randomUUID(),
+            recordingId,
+            nextSeqNo,
+            event.eventType,
+            event.pageUrl ?? null,
+            JSON.stringify(event.locator ?? null),
+            JSON.stringify(event.payload ?? {}),
+            event.capturedAt ?? now,
+          ],
+        );
+      }
+
+      await client.query(
+        `update ${recordingsTable}
+         set updated_at = now()
+         where recording_id = $1`,
+        [recordingId],
+      );
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const refreshed = await this.getRecording(recordingId);
+    return refreshed
+      ? {
+        recording: refreshed,
+        appendedCount: events.length,
+      }
+      : undefined;
+  }
+
+  async analyzeRecordingDsl(
+    recordingId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneRecordingAnalysisJobRecord | undefined> {
+    const recording = await this.getRecording(recordingId);
+    if (!recording) {
+      return undefined;
+    }
+
+    const events = await this.listRecordingEvents(recordingId);
+    if (events.length === 0) {
+      throw new ControlPlaneRequestError(400, 'RECORDING_EVENTS_REQUIRED', 'recording has no events to analyze');
+    }
+
+    const analysis = analyzeRecordingEvents(recording, events.map((event) => ({
+      eventType: event.event_type,
+      pageUrl: event.page_url,
+      locator: parseLocatorColumn(event.locator_json),
+      payload: parseJsonColumn<Record<string, unknown>>(event.payload_json) ?? {},
+    })));
+
+    const now = new Date().toISOString();
+    const jobId = randomUUID();
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(recording.tenantId, client);
+      const jobsTable = this.tableName(tenantSchema, 'recording_analysis_jobs');
+      const recordingsTable = this.tableName(tenantSchema, 'recordings');
+      await client.query(
+        `insert into ${jobsTable} (
+           recording_analysis_job_id, recording_id, tenant_id, project_id, status, dsl_plan_json,
+           structured_plan_json, data_template_draft_json, started_at, finished_at, created_by, created_at
+         ) values (
+           $1, $2, $3, $4, 'succeeded', $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $8
+         )`,
+        [
+          jobId,
+          recordingId,
+          recording.tenantId,
+          recording.projectId,
+          JSON.stringify(analysis.dslPlan),
+          JSON.stringify(analysis.structuredPlan),
+          JSON.stringify(analysis.dataTemplateDraft),
+          now,
+          now,
+          actor.subjectId,
+        ],
+      );
+      await client.query(
+        `update ${recordingsTable}
+         set status = 'analyzed',
+             updated_at = now()
+         where recording_id = $1`,
+        [recordingId],
+      );
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return {
+      recordingAnalysisJobId: jobId,
+      recordingId,
+      tenantId: recording.tenantId,
+      projectId: recording.projectId,
+      status: 'succeeded',
+      dslPlan: analysis.dslPlan,
+      structuredPlan: analysis.structuredPlan,
+      dataTemplateDraft: analysis.dataTemplateDraft,
+      startedAt: now,
+      finishedAt: now,
+      createdBy: actor.subjectId,
+      createdAt: now,
+    };
+  }
+
+  async publishRecordingAsTestCase(
+    recordingId: string,
+    input: ControlPlanePublishRecordingInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseResult | undefined> {
+    const recording = await this.getRecording(recordingId);
+    if (!recording) {
+      return undefined;
+    }
+
+    const analysisJob = input.analysisJobId
+      ? await this.getRecordingAnalysisJob(recordingId, input.analysisJobId)
+      : await this.getLatestRecordingAnalysisJob(recordingId);
+    if (!analysisJob || analysisJob.status !== 'succeeded' || !analysisJob.dslPlan) {
+      throw new ControlPlaneRequestError(409, 'RECORDING_ANALYSIS_REQUIRED', 'recording must have a successful analysis result before publish');
+    }
+
+    const created = await this.createTestCase({
+      tenantId: recording.tenantId,
+      projectId: recording.projectId,
+      name: input.name ?? recording.name,
+      plan: analysisJob.dslPlan,
+      envProfile: recording.envProfile,
+      versionLabel: input.versionLabel,
+      changeSummary: input.changeSummary ?? `published from recording ${recordingId}`,
+      publish: input.publish,
+      sourceRecordingId: recording.recordingId,
+      defaultDataset: input.defaultDataset,
+    }, actor);
+
+    const tenantSchema = await this.ensureTenantSchema(recording.tenantId);
+    const recordingsTable = this.tableName(tenantSchema, 'recordings');
+    await this.pool.query(
+      `update ${recordingsTable}
+       set status = 'published',
+           finished_at = coalesce(finished_at, now()),
+           updated_at = now()
+       where recording_id = $1`,
+      [recordingId],
+    );
+
+    return created;
+  }
+
+  async extractTestCaseFromRunItem(
+    runItemId: string,
+    input: ControlPlaneExtractTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDeriveTestCaseResult | undefined> {
+    const runItem = await this.getRunItemForDerivation(runItemId);
+    if (!runItem) {
+      return undefined;
+    }
+    if (!['passed', 'failed', 'canceled'].includes(runItem.status)) {
+      throw new ControlPlaneRequestError(409, 'RUN_ITEM_NOT_COMPLETED', 'run item must be completed before extraction');
+    }
+
+    const job = parseJsonColumn<WebWorkerJob>(runItem.job_payload_json);
+    if (!job) {
+      throw new ControlPlaneRequestError(409, 'RUN_ITEM_JOB_PAYLOAD_MISSING', 'run item job payload is missing');
+    }
+
+    const schema = deriveTemplateSchemaFromPlan(job.plan);
+    const inputSnapshot = parseJsonColumn<Record<string, unknown>>(runItem.input_snapshot_json) ?? {};
+    const defaultDatasetValues = filterDatasetValuesForSchema(schema, inputSnapshot);
+    const defaultDataset = {
+      name: input.defaultDatasetName ?? `run-item-${runItemId}`,
+      values: defaultDatasetValues,
+    };
+
+    if (runItem.test_case_id) {
+      const created = await this.createTestCaseVersion(
+        runItem.test_case_id,
+        {
+          plan: job.plan,
+          envProfile: job.envProfile,
+          versionLabel: input.versionLabel,
+          changeSummary: input.changeSummary ?? `extracted from run item ${runItemId}`,
+          publish: input.publish,
+          sourceRecordingId: runItem.source_recording_id ?? undefined,
+          sourceRunId: runItem.run_id,
+          derivedFromCaseVersionId: runItem.test_case_version_id ?? undefined,
+          defaultDataset,
+        },
+        actor,
+      );
+      if (!created) {
+        return undefined;
+      }
+      return {
+        derivationMode: 'new_version',
+        testCase: created.testCase,
+        version: created.version,
+        dataTemplateVersion: created.dataTemplateVersion,
+        defaultDatasetRow: created.defaultDatasetRow,
+      };
+    }
+
+    const created = await this.createTestCase(
+      {
+        tenantId: runItem.tenant_id,
+        projectId: runItem.project_id,
+        name: input.name ?? `Extracted run item ${runItemId}`,
+        plan: job.plan,
+        envProfile: job.envProfile,
+        versionLabel: input.versionLabel,
+        changeSummary: input.changeSummary ?? `extracted from run item ${runItemId}`,
+        publish: input.publish,
+        sourceRecordingId: runItem.source_recording_id ?? undefined,
+        sourceRunId: runItem.run_id,
+        defaultDataset,
+      },
+      actor,
+    );
+    return {
+      derivationMode: 'new_case',
+      testCase: created.testCase,
+      version: created.version,
+      dataTemplateVersion: created.dataTemplateVersion,
+      defaultDatasetRow: created.defaultDatasetRow,
+    };
   }
 
   async createTestCase(
@@ -2845,6 +3301,20 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     return result.rows[0];
   }
 
+  private async getRecordingLocator(
+    recordingId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, recording_id
+       from recording_locators
+       where recording_id = $1
+       limit 1`,
+      [recordingId],
+    );
+    return result.rows[0];
+  }
+
   private async getTestCaseLocator(
     testCaseId: string,
     executor: SqlPoolLike | SqlPoolClientLike = this.pool,
@@ -3002,6 +3472,21 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          project_id = excluded.project_id,
          updated_at = now()`,
       [input.runItemId, input.runId, input.jobId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async upsertRecordingLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { recordingId: string; tenantId: string; projectId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into recording_locators (recording_id, tenant_id, project_id)
+       values ($1, $2, $3)
+       on conflict (recording_id) do update set
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.recordingId, input.tenantId, input.projectId],
     );
   }
 
@@ -3214,6 +3699,84 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     return result.rows[0] ? mapDatasetRow(result.rows[0]) : undefined;
   }
 
+  private async listRecordingEvents(recordingId: string): Promise<RecordingEventRow[]> {
+    const recording = await this.getRecording(recordingId);
+    if (!recording) {
+      return [];
+    }
+
+    const table = this.tableName(recording.tenantId, 'recording_events');
+    const result = await this.pool.query<RecordingEventRow>(
+      `select recording_event_id, recording_id, seq_no, event_type, page_url, locator_json, payload_json, captured_at
+       from ${table}
+       where recording_id = $1
+       order by seq_no asc`,
+      [recordingId],
+    );
+    return result.rows;
+  }
+
+  private async getRecordingAnalysisJob(
+    recordingId: string,
+    recordingAnalysisJobId: string,
+  ): Promise<ControlPlaneRecordingAnalysisJobRecord | undefined> {
+    const recording = await this.getRecording(recordingId);
+    if (!recording) {
+      return undefined;
+    }
+
+    const table = this.tableName(recording.tenantId, 'recording_analysis_jobs');
+    const result = await this.pool.query<RecordingAnalysisJobRow>(
+      `select recording_analysis_job_id, recording_id, tenant_id, project_id, status, dsl_plan_json,
+              structured_plan_json, data_template_draft_json, started_at, finished_at, created_by, created_at
+       from ${table}
+       where recording_id = $1
+         and recording_analysis_job_id = $2
+       limit 1`,
+      [recordingId, recordingAnalysisJobId],
+    );
+    return result.rows[0] ? mapRecordingAnalysisJob(result.rows[0]) : undefined;
+  }
+
+  private async getLatestRecordingAnalysisJob(
+    recordingId: string,
+  ): Promise<ControlPlaneRecordingAnalysisJobRecord | undefined> {
+    const recording = await this.getRecording(recordingId);
+    if (!recording) {
+      return undefined;
+    }
+
+    const table = this.tableName(recording.tenantId, 'recording_analysis_jobs');
+    const result = await this.pool.query<RecordingAnalysisJobRow>(
+      `select recording_analysis_job_id, recording_id, tenant_id, project_id, status, dsl_plan_json,
+              structured_plan_json, data_template_draft_json, started_at, finished_at, created_by, created_at
+       from ${table}
+       where recording_id = $1
+       order by created_at desc, recording_analysis_job_id desc
+       limit 1`,
+      [recordingId],
+    );
+    return result.rows[0] ? mapRecordingAnalysisJob(result.rows[0]) : undefined;
+  }
+
+  private async getRunItemForDerivation(runItemId: string): Promise<DerivableRunItemRow | undefined> {
+    const locator = await this.getRunItemLocatorByRunItemId(runItemId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const table = this.tableName(locator.tenant_id, 'run_items');
+    const result = await this.pool.query<DerivableRunItemRow>(
+      `select run_item_id, run_id, tenant_id, project_id, status, test_case_id, test_case_version_id,
+              input_snapshot_json, source_recording_id, job_payload_json
+       from ${table}
+       where run_item_id = $1
+       limit 1`,
+      [runItemId],
+    );
+    return result.rows[0];
+  }
+
   private async insertNewTestCaseBundle(
     client: SqlPoolClientLike,
     tenantSchema: string,
@@ -3294,7 +3857,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          plan_json, env_profile_json, data_template_id, data_template_version_id,
          source_recording_id, source_run_id, derived_from_case_version_id, change_summary, created_by, created_at
        ) values (
-         $1, $2, $3, $4, 1, $5, $6, $7::jsonb, $8::jsonb, $9, $10, null, null, null, $11, $12, $13
+         $1, $2, $3, $4, 1, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16
        )`,
       [
         testCaseVersionId,
@@ -3307,6 +3870,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         JSON.stringify(input.envProfile),
         dataTemplateId,
         dataTemplateVersionId,
+        input.sourceRecordingId ?? null,
+        input.sourceRunId ?? null,
+        input.derivedFromCaseVersionId ?? null,
         input.changeSummary ?? null,
         actor.subjectId,
         now,
@@ -3386,9 +3952,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         dataTemplateId,
         dataTemplateVersionId,
         defaultDatasetRowId: datasetRowId,
-        sourceRecordingId: null,
-        sourceRunId: null,
-        derivedFromCaseVersionId: null,
+        sourceRecordingId: input.sourceRecordingId ?? null,
+        sourceRunId: input.sourceRunId ?? null,
+        derivedFromCaseVersionId: input.derivedFromCaseVersionId ?? null,
         changeSummary: input.changeSummary ?? null,
         createdBy: actor.subjectId,
         createdAt: now,
@@ -3513,7 +4079,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          source_recording_id, source_run_id, derived_from_case_version_id, change_summary, created_by, created_at
        ) values (
          $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11,
-         null, null, $12, $13, $14, $15
+         $12, $13, $14, $15, $16, $17
        )`,
       [
         testCaseVersionId,
@@ -3527,7 +4093,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         JSON.stringify(input.envProfile),
         testCase.dataTemplateId,
         dataTemplateVersionId,
-        testCase.latestVersionId,
+        input.sourceRecordingId ?? null,
+        input.sourceRunId ?? null,
+        input.derivedFromCaseVersionId ?? testCase.latestVersionId,
         input.changeSummary ?? null,
         actor.subjectId,
         now,
@@ -3609,9 +4177,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         dataTemplateId: testCase.dataTemplateId,
         dataTemplateVersionId,
         defaultDatasetRowId: datasetRowId,
-        sourceRecordingId: null,
-        sourceRunId: null,
-        derivedFromCaseVersionId: testCase.latestVersionId,
+        sourceRecordingId: input.sourceRecordingId ?? null,
+        sourceRunId: input.sourceRunId ?? null,
+        derivedFromCaseVersionId: input.derivedFromCaseVersionId ?? testCase.latestVersionId,
         changeSummary: input.changeSummary ?? null,
         createdBy: actor.subjectId,
         createdAt: now,

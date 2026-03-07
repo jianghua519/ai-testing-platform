@@ -4,10 +4,13 @@ import { pipeline } from 'node:stream/promises';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type {
+  ControlPlaneCreateRecordingEventInput,
+  ControlPlaneCreateRecordingInput,
   ControlPlaneCreateDatasetRowInput,
   ControlPlaneCreateTestCaseInput,
   ControlPlaneCreateTestCaseVersionInput,
   ControlPlaneDataTemplateVersionRecord,
+  ControlPlaneDeriveTestCaseResult,
   ControlPlaneDatasetRowRecord,
   ControlPlaneEnqueueCaseVersionRunInput,
   ControlPlaneAcquireLeaseInput,
@@ -20,7 +23,10 @@ import type {
   ControlPlaneJobLeaseRecord,
   ControlPlanePage,
   ControlPlanePrincipal,
+  ControlPlanePublishRecordingInput,
   ControlPlaneRegisterAgentInput,
+  ControlPlaneRecordingAnalysisJobRecord,
+  ControlPlaneRecordingRecord,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneSchedulingStore,
@@ -29,6 +35,7 @@ import type {
   ControlPlaneStore,
   ControlPlaneTestCaseRecord,
   ControlPlaneTestCaseVersionRecord,
+  ControlPlaneExtractTestCaseInput,
   ControlPlaneUpdateDatasetRowInput,
   ControlPlaneUpdateTestCaseInput,
   JobEventsResponse,
@@ -199,6 +206,10 @@ const normalizeRunExecutionPolicy = (value: Record<string, unknown>) => {
 };
 
 const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
+const isLocatorDraftShape = (value: unknown): value is { strategy: string; value: string } =>
+  isObject(value)
+  && isString(value.strategy)
+  && isString(value.value);
 
 const isDatasetPayload = (value: unknown): value is Record<string, unknown> =>
   isObject(value)
@@ -243,6 +254,47 @@ const isDatasetRowPatchRequest = (value: unknown): value is Record<string, unkno
 
 const isBindDefaultDatasetRequest = (value: unknown): value is Record<string, unknown> =>
   isObject(value) && isString(value.datasetRowId ?? value.dataset_row_id);
+
+const isRecordingSourceType = (value: unknown): value is 'manual' | 'auto_explore' | 'run_replay' =>
+  value === 'manual' || value === 'auto_explore' || value === 'run_replay';
+
+const isCreateRecordingRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && isString(value.tenant_id)
+  && isString(value.project_id)
+  && isString(value.name)
+  && isRecordingSourceType(value.source_type)
+  && isObject(value.env_profile);
+
+const isRecordingEventItemRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && isString(value.event_type)
+  && ((value.page_url === undefined) || isString(value.page_url))
+  && ((value.locator === undefined) || isLocatorDraftShape(value.locator))
+  && ((value.payload === undefined) || isObject(value.payload))
+  && ((value.captured_at === undefined) || isString(value.captured_at));
+
+const isAppendRecordingEventsRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && Array.isArray(value.events)
+  && value.events.every(isRecordingEventItemRequest);
+
+const isPublishRecordingRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && ((value.name === undefined) || isString(value.name))
+  && ((value.version_label === undefined) || isString(value.version_label))
+  && ((value.change_summary === undefined) || isString(value.change_summary))
+  && ((value.publish === undefined) || isBoolean(value.publish))
+  && ((value.analysis_job_id === undefined) || isString(value.analysis_job_id))
+  && ((value.default_dataset === undefined) || isDatasetPayload(value.default_dataset));
+
+const isExtractTestCaseRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && ((value.name === undefined) || isString(value.name))
+  && ((value.version_label === undefined) || isString(value.version_label))
+  && ((value.change_summary === undefined) || isString(value.change_summary))
+  && ((value.publish === undefined) || isBoolean(value.publish))
+  && ((value.default_dataset_name === undefined) || isString(value.default_dataset_name));
 
 const normalizeTestCaseCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateTestCaseInput => ({
   tenantId: String(value.tenant_id),
@@ -294,6 +346,49 @@ const normalizeDatasetRowCreateRequest = (value: Record<string, unknown>): Contr
 const normalizeDatasetRowPatchRequest = (value: Record<string, unknown>): ControlPlaneUpdateDatasetRowInput => ({
   name: typeof value.name === 'string' ? value.name : undefined,
   values: isObject(value.values) ? value.values : undefined,
+});
+
+const normalizeCreateRecordingRequest = (value: Record<string, unknown>): ControlPlaneCreateRecordingInput => ({
+  tenantId: String(value.tenant_id),
+  projectId: String(value.project_id),
+  name: String(value.name),
+  sourceType: String(value.source_type) as ControlPlaneCreateRecordingInput['sourceType'],
+  envProfile: value.env_profile as ControlPlaneCreateRecordingInput['envProfile'],
+  startedAt: typeof value.started_at === 'string' ? value.started_at : undefined,
+  finishedAt: typeof value.finished_at === 'string' ? value.finished_at : undefined,
+});
+
+const normalizeRecordingEventRequests = (value: Record<string, unknown>): ControlPlaneCreateRecordingEventInput[] =>
+  ((value.events as Record<string, unknown>[]) ?? []).map((event) => ({
+    eventType: String(event.event_type),
+    pageUrl: typeof event.page_url === 'string' ? event.page_url : undefined,
+    locator: isLocatorDraftShape(event.locator)
+      ? event.locator as unknown as ControlPlaneCreateRecordingEventInput['locator']
+      : undefined,
+    payload: isObject(event.payload) ? event.payload : undefined,
+    capturedAt: typeof event.captured_at === 'string' ? event.captured_at : undefined,
+  }));
+
+const normalizePublishRecordingRequest = (value: Record<string, unknown>): ControlPlanePublishRecordingInput => ({
+  name: typeof value.name === 'string' ? value.name : undefined,
+  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
+  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
+  publish: isBoolean(value.publish) ? value.publish : undefined,
+  analysisJobId: typeof value.analysis_job_id === 'string' ? value.analysis_job_id : undefined,
+  defaultDataset: isDatasetPayload(value.default_dataset)
+    ? {
+      name: typeof value.default_dataset.name === 'string' ? value.default_dataset.name : undefined,
+      values: isObject(value.default_dataset.values) ? value.default_dataset.values : undefined,
+    }
+    : undefined,
+});
+
+const normalizeExtractTestCaseRequest = (value: Record<string, unknown>): ControlPlaneExtractTestCaseInput => ({
+  name: typeof value.name === 'string' ? value.name : undefined,
+  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
+  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
+  publish: isBoolean(value.publish) ? value.publish : undefined,
+  defaultDatasetName: typeof value.default_dataset_name === 'string' ? value.default_dataset_name : undefined,
 });
 
 const normalizeRegisterAgent = (value: Record<string, unknown>): ControlPlaneRegisterAgentInput => ({
@@ -566,6 +661,44 @@ const toApiTestCaseBundle = (
   default_dataset_row: toApiDatasetRow(defaultDatasetRow),
 });
 
+const toApiRecording = (recording: ControlPlaneRecordingRecord) => ({
+  id: recording.recordingId,
+  tenant_id: recording.tenantId,
+  project_id: recording.projectId,
+  name: recording.name,
+  status: recording.status,
+  source_type: recording.sourceType,
+  env_profile: recording.envProfile,
+  started_at: recording.startedAt,
+  finished_at: recording.finishedAt,
+  created_by: recording.createdBy,
+  created_at: recording.createdAt,
+  updated_at: recording.updatedAt,
+});
+
+const toApiRecordingAnalysisJob = (analysisJob: ControlPlaneRecordingAnalysisJobRecord) => ({
+  id: analysisJob.recordingAnalysisJobId,
+  recording_id: analysisJob.recordingId,
+  tenant_id: analysisJob.tenantId,
+  project_id: analysisJob.projectId,
+  status: analysisJob.status,
+  dsl_plan: analysisJob.dslPlan,
+  structured_plan: analysisJob.structuredPlan,
+  data_template_draft: toApiTemplateSchema(analysisJob.dataTemplateDraft),
+  started_at: analysisJob.startedAt,
+  finished_at: analysisJob.finishedAt,
+  created_by: analysisJob.createdBy,
+  created_at: analysisJob.createdAt,
+});
+
+const toApiDerivedTestCaseBundle = (derived: ControlPlaneDeriveTestCaseResult) => ({
+  derivation_mode: derived.derivationMode,
+  test_case: toApiTestCase(derived.testCase),
+  version: toApiTestCaseVersion(derived.version),
+  data_template: toApiDataTemplateVersion(derived.dataTemplateVersion),
+  default_dataset_row: toApiDatasetRow(derived.defaultDatasetRow),
+});
+
 const toApiLease = (lease: ControlPlaneJobLeaseRecord) => ({
   lease_id: lease.leaseId,
   lease_token: lease.leaseToken,
@@ -709,6 +842,218 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         }
 
         json(response, 200, toApiPrincipal(principal));
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/v1/recordings') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.createRecording) {
+          notSupported(response, 'create recording');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isCreateRecordingRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_RECORDING_CREATE_REQUEST',
+              message: 'tenant_id, project_id, name, source_type and env_profile are required',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const input = normalizeCreateRecordingRequest(body as Record<string, unknown>);
+        if (input.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, input.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'project_id is not granted to the principal');
+          return;
+        }
+
+        const recording = await store.createRecording(input, { subjectId: principal.subjectId });
+        json(response, 201, toApiRecording(recording));
+        return;
+      }
+
+      const recordingMatch = matchPath(pathname, /^\/api\/v1\/recordings\/([^/:]+)$/);
+      if (method === 'GET' && recordingMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getRecording) {
+          notSupported(response, 'get recording');
+          return;
+        }
+
+        const [, recordingId] = recordingMatch;
+        const recording = await store.getRecording(recordingId);
+        if (!recording) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        if (recording.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'recording tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, recording.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'recording project_id is not granted to the principal');
+          return;
+        }
+
+        json(response, 200, toApiRecording(recording));
+        return;
+      }
+
+      const recordingEventsMatch = matchPath(pathname, /^\/api\/v1\/recordings\/([^/:]+)\/events$/);
+      if (method === 'POST' && recordingEventsMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getRecording || !store.appendRecordingEvents) {
+          notSupported(response, 'append recording events');
+          return;
+        }
+
+        const [, recordingId] = recordingEventsMatch;
+        const recording = await store.getRecording(recordingId);
+        if (!recording) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        if (recording.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'recording tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, recording.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'recording project_id is not granted to the principal');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isAppendRecordingEventsRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_RECORDING_EVENTS_REQUEST',
+              message: 'events must be a non-empty array of recording events',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const appended = await store.appendRecordingEvents(
+          recordingId,
+          normalizeRecordingEventRequests(body as Record<string, unknown>),
+          { subjectId: principal.subjectId },
+        );
+        if (!appended) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 201, {
+          recording: toApiRecording(appended.recording),
+          appended_count: appended.appendedCount,
+        });
+        return;
+      }
+
+      const analyzeRecordingMatch = matchPath(pathname, /^\/api\/v1\/recordings\/([^/:]+):analyze-dsl$/);
+      if (method === 'POST' && analyzeRecordingMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getRecording || !store.analyzeRecordingDsl) {
+          notSupported(response, 'analyze recording dsl');
+          return;
+        }
+
+        const [, recordingId] = analyzeRecordingMatch;
+        const recording = await store.getRecording(recordingId);
+        if (!recording) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        if (recording.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'recording tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, recording.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'recording project_id is not granted to the principal');
+          return;
+        }
+
+        const analysisJob = await store.analyzeRecordingDsl(recordingId, { subjectId: principal.subjectId });
+        if (!analysisJob) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 201, toApiRecordingAnalysisJob(analysisJob));
+        return;
+      }
+
+      const publishRecordingMatch = matchPath(pathname, /^\/api\/v1\/recordings\/([^/:]+):publish-test-case$/);
+      if (method === 'POST' && publishRecordingMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getRecording || !store.publishRecordingAsTestCase) {
+          notSupported(response, 'publish recording as test case');
+          return;
+        }
+
+        const [, recordingId] = publishRecordingMatch;
+        const recording = await store.getRecording(recordingId);
+        if (!recording) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        if (recording.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'recording tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, recording.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'recording project_id is not granted to the principal');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isPublishRecordingRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_RECORDING_PUBLISH_REQUEST',
+              message: 'recording publish payload is invalid',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const created = await store.publishRecordingAsTestCase(
+          recordingId,
+          normalizePublishRecordingRequest(body as Record<string, unknown>),
+          { subjectId: principal.subjectId },
+        );
+        if (!created) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'recording not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 201, toApiTestCaseBundle(
+          created.testCase,
+          created.version,
+          created.dataTemplateVersion,
+          created.defaultDatasetRow,
+        ));
         return;
       }
 
@@ -1734,6 +2079,57 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
         json(response, 200, toApiRunItem(runItem));
+        return;
+      }
+
+      const extractRunItemMatch = matchPath(pathname, /^\/api\/v1\/run-items\/([^/:]+):extract-test-case$/);
+      if (method === 'POST' && extractRunItemMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getRunItem || !store.extractTestCaseFromRunItem) {
+          notSupported(response, 'extract test case from run item');
+          return;
+        }
+
+        const [, runItemId] = extractRunItemMatch;
+        const runItem = await store.getRunItem(runItemId);
+        if (!runItem) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run item not found', trace_id: 'local' } });
+          return;
+        }
+        if (runItem.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'run item tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, runItem.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'run item project_id is not granted to the principal');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isExtractTestCaseRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_EXTRACT_TEST_CASE_REQUEST',
+              message: 'extract test case payload is invalid',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const derived = await store.extractTestCaseFromRunItem(
+          runItemId,
+          normalizeExtractTestCaseRequest(body as Record<string, unknown>),
+          { subjectId: principal.subjectId },
+        );
+        if (!derived) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run item not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 201, toApiDerivedTestCaseBundle(derived));
         return;
       }
 
