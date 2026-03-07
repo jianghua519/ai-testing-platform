@@ -17,3 +17,4 @@ summary: 测试报告文档的存放位置和命名规范。
 每份报告都应指向 `docs/evidence/records/` 下对应的证据记录。
 
 - `2026-03-07`: `docs/testing/test-reports/20260307-150657-artifact-object-storage-retention-test-report.md` - artifact 对象存储、下载与保留策略
+- `2026-03-07`: `docs/testing/test-reports/20260307-223500-test-asset-phase1-compose-smoke-test-report.md` - Phase 1 测试资产域真实 smoke、版本化执行与 MinIO artifact 验证

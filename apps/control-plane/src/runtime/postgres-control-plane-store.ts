@@ -5,7 +5,15 @@ import type {
   ControlPlaneAcquireLeaseResult,
   ControlPlaneArtifactRecord,
   ControlPlaneAuthenticatedActor,
+  ControlPlaneCreateDatasetRowInput,
+  ControlPlaneCreateTestCaseInput,
+  ControlPlaneCreateTestCaseResult,
+  ControlPlaneCreateTestCaseVersionInput,
+  ControlPlaneCreateTestCaseVersionResult,
   ControlPlaneCompleteLeaseInput,
+  ControlPlaneDataTemplateVersionRecord,
+  ControlPlaneDatasetRowRecord,
+  ControlPlaneEnqueueCaseVersionRunInput,
   ControlPlaneEnqueueWebRunInput,
   ControlPlaneEnqueueWebRunResult,
   ControlPlaneHeartbeatAgentInput,
@@ -13,10 +21,13 @@ import type {
   ControlPlaneJobLeaseRecord,
   ControlPlaneAgentRecord,
   ControlPlaneListArtifactsQuery,
+  ControlPlaneListDatasetRowsQuery,
   ControlPlaneListExpiredArtifactsQuery,
   ControlPlaneListRunItemsQuery,
   ControlPlaneListRunsQuery,
   ControlPlaneListStepEventsQuery,
+  ControlPlaneListTestCasesQuery,
+  ControlPlaneListTestCaseVersionsQuery,
   ControlPlaneMigrationRecord,
   ControlPlanePage,
   ControlPlanePrincipal,
@@ -26,11 +37,15 @@ import type {
   ControlPlaneStateSnapshot,
   ControlPlaneStepEventRecord,
   ControlPlaneStore,
+  ControlPlaneTestCaseRecord,
+  ControlPlaneTestCaseVersionRecord,
+  ControlPlaneUpdateDatasetRowInput,
+  ControlPlaneUpdateTestCaseInput,
   RecordedRunnerEvent,
   RecordRunnerEventResult,
   RunnerResultEnvelope,
 } from '../types.js';
-import type { ArtifactReference, CompiledStep } from '@aiwtp/web-dsl-schema';
+import type { ArtifactReference, CompiledStep, EnvProfile, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
 import type {
   ResultReportedEnvelope,
   StepResultReportedEnvelope,
@@ -44,6 +59,13 @@ import {
 import { buildWebRunRequiredCapabilities, normalizeCapabilities } from './job-capabilities.js';
 import { decodeCursor, encodeCursor } from './pagination.js';
 import { buildTenantBusinessSchemaSql, quotePostgresIdentifier } from './postgres-schema.js';
+import {
+  ControlPlaneRequestError,
+  buildExecutionInputSnapshot,
+  deriveTemplateSchemaFromPlan,
+  ensureDefaultDatasetValues,
+  validateDatasetValues,
+} from './test-assets.js';
 
 interface SqlQueryResult<Row> {
   rows: Row[];
@@ -90,6 +112,7 @@ interface RunProjectionRow {
   project_id: string;
   name: string | null;
   mode: string | null;
+  selection_kind: string | null;
   status: string;
   started_at: string | null;
   finished_at: string | null;
@@ -108,6 +131,12 @@ interface RunItemProjectionRow {
   status: string;
   job_kind: string | null;
   required_capabilities_json: string[] | string;
+  test_case_id: string | null;
+  test_case_version_id: string | null;
+  data_template_version_id: string | null;
+  dataset_row_id: string | null;
+  input_snapshot_json: Record<string, unknown> | string;
+  source_recording_id: string | null;
   assigned_agent_id: string | null;
   lease_token: string | null;
   control_state: string | null;
@@ -220,11 +249,81 @@ interface EntityLocatorRow {
   run_item_id?: string | null;
   job_id?: string | null;
   agent_id?: string | null;
+  test_case_id?: string | null;
+  test_case_version_id?: string | null;
+  data_template_id?: string | null;
+  data_template_version_id?: string | null;
+  dataset_row_id?: string | null;
 }
 
 interface TenantSchemaRow {
   tenant_id: string;
   schema_name: string;
+}
+
+interface TestCaseRow {
+  test_case_id: string;
+  tenant_id: string;
+  project_id: string;
+  data_template_id: string;
+  name: string;
+  status: string;
+  latest_version_id: string | null;
+  latest_published_version_id: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TestCaseVersionRow {
+  test_case_version_id: string;
+  test_case_id: string;
+  tenant_id: string;
+  project_id: string;
+  version_no: number;
+  version_label: string | null;
+  status: string;
+  plan_json: WebStepPlanDraft | string;
+  env_profile_json: EnvProfile | string;
+  data_template_id: string;
+  data_template_version_id: string;
+  default_dataset_row_id: string | null;
+  source_recording_id: string | null;
+  source_run_id: string | null;
+  derived_from_case_version_id: string | null;
+  change_summary: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+interface DataTemplateVersionRow {
+  data_template_id: string;
+  data_template_version_id: string;
+  test_case_id: string;
+  tenant_id: string;
+  project_id: string;
+  version_no: number;
+  schema_json: ControlPlaneDataTemplateVersionRecord['schema'] | string;
+  validation_rules_json: Record<string, unknown> | string;
+  default_dataset_row_id: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+interface DatasetRow {
+  dataset_row_id: string;
+  test_case_id: string;
+  data_template_version_id: string;
+  tenant_id: string;
+  project_id: string;
+  name: string;
+  status: string;
+  values_json: Record<string, unknown> | string;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface SubjectProjectMembershipRow {
@@ -369,6 +468,7 @@ const mapRunProjection = (row: RunProjectionRow): ControlPlaneRunRecord => ({
   projectId: row.project_id,
   name: row.name,
   mode: row.mode,
+  selectionKind: row.selection_kind,
   status: row.status,
   startedAt: row.started_at,
   finishedAt: row.finished_at,
@@ -387,6 +487,12 @@ const mapRunItemProjection = (row: RunItemProjectionRow): ControlPlaneRunItemRec
   status: row.status,
   jobKind: row.job_kind,
   requiredCapabilities: parseJsonColumn<string[]>(row.required_capabilities_json) ?? [],
+  testCaseId: row.test_case_id,
+  testCaseVersionId: row.test_case_version_id,
+  dataTemplateVersionId: row.data_template_version_id,
+  datasetRowId: row.dataset_row_id,
+  inputSnapshot: parseJsonColumn<Record<string, unknown>>(row.input_snapshot_json) ?? {},
+  sourceRecordingId: row.source_recording_id,
   assignedAgentId: row.assigned_agent_id,
   leaseToken: row.lease_token,
   controlState: row.control_state,
@@ -417,6 +523,71 @@ const mapStepEventProjection = (row: StepEventProjectionRow): ControlPlaneStepEv
   artifacts: parseJsonColumn<unknown[]>(row.artifacts_json) ?? [],
   extractedVariables: parseJsonColumn<unknown[]>(row.extracted_variables_json) ?? [],
   receivedAt: row.received_at,
+});
+
+const mapTestCase = (row: TestCaseRow): ControlPlaneTestCaseRecord => ({
+  testCaseId: row.test_case_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  dataTemplateId: row.data_template_id,
+  name: row.name,
+  status: row.status,
+  latestVersionId: row.latest_version_id,
+  latestPublishedVersionId: row.latest_published_version_id,
+  createdBy: row.created_by,
+  updatedBy: row.updated_by,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapTestCaseVersion = (row: TestCaseVersionRow): ControlPlaneTestCaseVersionRecord => ({
+  testCaseVersionId: row.test_case_version_id,
+  testCaseId: row.test_case_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  versionNo: row.version_no,
+  versionLabel: row.version_label,
+  status: row.status,
+  plan: parseJsonColumn<WebStepPlanDraft>(row.plan_json) as WebStepPlanDraft,
+  envProfile: parseJsonColumn<EnvProfile>(row.env_profile_json) as EnvProfile,
+  dataTemplateId: row.data_template_id,
+  dataTemplateVersionId: row.data_template_version_id,
+  defaultDatasetRowId: row.default_dataset_row_id,
+  sourceRecordingId: row.source_recording_id,
+  sourceRunId: row.source_run_id,
+  derivedFromCaseVersionId: row.derived_from_case_version_id,
+  changeSummary: row.change_summary,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+});
+
+const mapDataTemplateVersion = (row: DataTemplateVersionRow): ControlPlaneDataTemplateVersionRecord => ({
+  dataTemplateId: row.data_template_id,
+  dataTemplateVersionId: row.data_template_version_id,
+  testCaseId: row.test_case_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  versionNo: row.version_no,
+  schema: parseJsonColumn<ControlPlaneDataTemplateVersionRecord['schema']>(row.schema_json) ?? { fields: [] },
+  validationRules: parseJsonColumn<Record<string, unknown>>(row.validation_rules_json) ?? {},
+  defaultDatasetRowId: row.default_dataset_row_id,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+});
+
+const mapDatasetRow = (row: DatasetRow): ControlPlaneDatasetRowRecord => ({
+  datasetRowId: row.dataset_row_id,
+  testCaseId: row.test_case_id,
+  dataTemplateVersionId: row.data_template_version_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  name: row.name,
+  status: row.status,
+  values: parseJsonColumn<Record<string, unknown>>(row.values_json) ?? {},
+  createdBy: row.created_by,
+  updatedBy: row.updated_by,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
 });
 
 const mapAgent = (row: AgentRow): ControlPlaneAgentRecord => ({
@@ -507,6 +678,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     if (shouldRunMigrations) {
       await store.runMigrations();
     }
+    await store.reconcileExistingTenantSchemas();
     return store;
   }
 
@@ -516,6 +688,617 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
     return listControlPlanePostgresMigrations(this.pool);
+  }
+
+  async createTestCase(
+    input: ControlPlaneCreateTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(input.tenantId, client);
+      const bundle = await this.insertNewTestCaseBundle(client, tenantSchema, input, actor);
+      await client.query('commit');
+      return bundle;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listTestCases(query: ControlPlaneListTestCasesQuery): Promise<ControlPlanePage<ControlPlaneTestCaseRecord>> {
+    const tenantSchema = await this.resolveTenantSchema(query.tenantId);
+    if (!tenantSchema) {
+      return { items: [] };
+    }
+
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [query.tenantId, query.projectId];
+    const table = this.tableName(tenantSchema, 'test_cases');
+    let sql = `select test_case_id, tenant_id, project_id, data_template_id, name, status,
+                      latest_version_id, latest_published_version_id, created_by, updated_by, created_at, updated_at
+       from ${table}
+       where tenant_id = $1
+         and project_id = $2
+         and status <> 'archived'`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (created_at, test_case_id) < ($3::timestamptz, $4)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by created_at desc, test_case_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<TestCaseRow>(sql, values);
+    return toPage(result.rows.map(mapTestCase), query.limit, (item) => ({
+      primary: item.createdAt,
+      secondary: item.testCaseId,
+    }));
+  }
+
+  async getTestCase(testCaseId: string): Promise<ControlPlaneTestCaseRecord | undefined> {
+    const locator = await this.getTestCaseLocator(testCaseId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const table = this.tableName(locator.tenant_id, 'test_cases');
+    const result = await this.pool.query<TestCaseRow>(
+      `select test_case_id, tenant_id, project_id, data_template_id, name, status,
+              latest_version_id, latest_published_version_id, created_by, updated_by, created_at, updated_at
+       from ${table}
+       where test_case_id = $1
+       limit 1`,
+      [testCaseId],
+    );
+    return result.rows[0] ? mapTestCase(result.rows[0]) : undefined;
+  }
+
+  async updateTestCase(
+    testCaseId: string,
+    input: ControlPlaneUpdateTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseRecord | undefined> {
+    const locator = await this.getTestCaseLocator(testCaseId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const table = this.tableName(locator.tenant_id, 'test_cases');
+    const result = await this.pool.query<TestCaseRow>(
+      `update ${table}
+       set name = coalesce($2, name),
+           status = coalesce($3, status),
+           updated_by = $4,
+           updated_at = now()
+       where test_case_id = $1
+       returning test_case_id, tenant_id, project_id, data_template_id, name, status,
+                 latest_version_id, latest_published_version_id, created_by, updated_by, created_at, updated_at`,
+      [testCaseId, input.name ?? null, input.status ?? null, actor.subjectId],
+    );
+    return result.rows[0] ? mapTestCase(result.rows[0]) : undefined;
+  }
+
+  async archiveTestCase(
+    testCaseId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseRecord | undefined> {
+    return this.updateTestCase(testCaseId, { status: 'archived' }, actor);
+  }
+
+  async listTestCaseVersions(query: ControlPlaneListTestCaseVersionsQuery): Promise<ControlPlanePage<ControlPlaneTestCaseVersionRecord>> {
+    const testCase = await this.getTestCase(query.testCaseId);
+    if (!testCase) {
+      return { items: [] };
+    }
+
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [query.testCaseId];
+    const versionsTable = this.tableName(testCase.tenantId, 'test_case_versions');
+    const bindingsTable = this.tableName(testCase.tenantId, 'case_default_dataset_bindings');
+    let sql = `select version.test_case_version_id, version.test_case_id, version.tenant_id, version.project_id,
+                      version.version_no, version.version_label, version.status, version.plan_json, version.env_profile_json,
+                      version.data_template_id, version.data_template_version_id, binding.dataset_row_id as default_dataset_row_id,
+                      version.source_recording_id, version.source_run_id, version.derived_from_case_version_id,
+                      version.change_summary, version.created_by, version.created_at
+       from ${versionsTable} version
+       left join ${bindingsTable} binding
+         on binding.test_case_version_id = version.test_case_version_id
+       where version.test_case_id = $1`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (version.created_at, version.test_case_version_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by version.created_at desc, version.test_case_version_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<TestCaseVersionRow>(sql, values);
+    return toPage(result.rows.map(mapTestCaseVersion), query.limit, (item) => ({
+      primary: item.createdAt,
+      secondary: item.testCaseVersionId,
+    }));
+  }
+
+  async createTestCaseVersion(
+    testCaseId: string,
+    input: ControlPlaneCreateTestCaseVersionInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseVersionResult | undefined> {
+    const locator = await this.getTestCaseLocator(testCaseId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const bundle = await this.insertAdditionalTestCaseVersionBundle(client, tenantSchema, testCaseId, input, actor);
+      await client.query('commit');
+      return bundle;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getTestCaseVersion(testCaseVersionId: string): Promise<ControlPlaneTestCaseVersionRecord | undefined> {
+    const locator = await this.getTestCaseVersionLocator(testCaseVersionId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const versionsTable = this.tableName(locator.tenant_id, 'test_case_versions');
+    const bindingsTable = this.tableName(locator.tenant_id, 'case_default_dataset_bindings');
+    const result = await this.pool.query<TestCaseVersionRow>(
+      `select version.test_case_version_id, version.test_case_id, version.tenant_id, version.project_id,
+              version.version_no, version.version_label, version.status, version.plan_json, version.env_profile_json,
+              version.data_template_id, version.data_template_version_id, binding.dataset_row_id as default_dataset_row_id,
+              version.source_recording_id, version.source_run_id, version.derived_from_case_version_id,
+              version.change_summary, version.created_by, version.created_at
+       from ${versionsTable} version
+       left join ${bindingsTable} binding
+         on binding.test_case_version_id = version.test_case_version_id
+       where version.test_case_version_id = $1
+       limit 1`,
+      [testCaseVersionId],
+    );
+    return result.rows[0] ? mapTestCaseVersion(result.rows[0]) : undefined;
+  }
+
+  async publishTestCaseVersion(
+    testCaseVersionId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseVersionRecord | undefined> {
+    const locator = await this.getTestCaseVersionLocator(testCaseVersionId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(locator.tenant_id, client);
+      const testCasesTable = this.tableName(tenantSchema, 'test_cases');
+      const versionsTable = this.tableName(tenantSchema, 'test_case_versions');
+      const version = await this.getTestCaseVersionForUpdate(client, tenantSchema, testCaseVersionId);
+      if (!version) {
+        await client.query('rollback');
+        return undefined;
+      }
+
+      await client.query(
+        `update ${versionsTable}
+         set status = 'published'
+         where test_case_version_id = $1`,
+        [testCaseVersionId],
+      );
+      await client.query(
+        `update ${testCasesTable}
+         set latest_published_version_id = $2,
+             status = 'active',
+             updated_by = $3,
+             updated_at = now()
+         where test_case_id = $1`,
+        [version.testCaseId, testCaseVersionId, actor.subjectId],
+      );
+
+      await client.query('commit');
+      return this.getTestCaseVersion(testCaseVersionId);
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getDataTemplateForCaseVersion(testCaseVersionId: string): Promise<ControlPlaneDataTemplateVersionRecord | undefined> {
+    const version = await this.getTestCaseVersion(testCaseVersionId);
+    if (!version) {
+      return undefined;
+    }
+
+    const table = this.tableName(version.tenantId, 'data_template_versions');
+    const bindingsTable = this.tableName(version.tenantId, 'case_default_dataset_bindings');
+    const result = await this.pool.query<DataTemplateVersionRow>(
+      `select template.data_template_id, template.data_template_version_id, template.test_case_id, template.tenant_id, template.project_id,
+              template.version_no, template.schema_json, template.validation_rules_json, binding.dataset_row_id as default_dataset_row_id,
+              template.created_by, template.created_at
+       from ${table} template
+       left join ${bindingsTable} binding
+         on binding.test_case_version_id = $1
+       where template.data_template_version_id = $2
+       limit 1`,
+      [testCaseVersionId, version.dataTemplateVersionId],
+    );
+    return result.rows[0] ? mapDataTemplateVersion(result.rows[0]) : undefined;
+  }
+
+  async listDatasetRows(query: ControlPlaneListDatasetRowsQuery): Promise<ControlPlanePage<ControlPlaneDatasetRowRecord>> {
+    const version = await this.getTestCaseVersion(query.testCaseVersionId);
+    if (!version) {
+      return { items: [] };
+    }
+
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [version.dataTemplateVersionId];
+    const table = this.tableName(version.tenantId, 'dataset_rows');
+    let sql = `select dataset_row_id, test_case_id, data_template_version_id, tenant_id, project_id,
+                      name, status, values_json, created_by, updated_by, created_at, updated_at
+       from ${table}
+       where data_template_version_id = $1
+         and status <> 'archived'`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (created_at, dataset_row_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by created_at desc, dataset_row_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<DatasetRow>(sql, values);
+    return toPage(result.rows.map(mapDatasetRow), query.limit, (item) => ({
+      primary: item.createdAt,
+      secondary: item.datasetRowId,
+    }));
+  }
+
+  async createDatasetRow(
+    testCaseVersionId: string,
+    input: ControlPlaneCreateDatasetRowInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDatasetRowRecord | undefined> {
+    const version = await this.getTestCaseVersion(testCaseVersionId);
+    if (!version) {
+      return undefined;
+    }
+    const template = await this.getDataTemplateForCaseVersion(testCaseVersionId);
+    if (!template) {
+      return undefined;
+    }
+
+    const values = validateDatasetValues(template.schema, input.values);
+    const datasetRowId = randomUUID();
+    const now = new Date().toISOString();
+    const table = this.tableName(version.tenantId, 'dataset_rows');
+    await this.pool.query(
+      `insert into ${table} (
+         dataset_row_id, data_template_version_id, test_case_id, tenant_id, project_id,
+         name, status, values_json, created_by, updated_by, created_at, updated_at
+       ) values (
+         $1, $2, $3, $4, $5, $6, 'active', $7::jsonb, $8, $8, $9, $9
+       )`,
+      [
+        datasetRowId,
+        version.dataTemplateVersionId,
+        version.testCaseId,
+        version.tenantId,
+        version.projectId,
+        input.name ?? `dataset-${now}`,
+        JSON.stringify(values),
+        actor.subjectId,
+        now,
+      ],
+    );
+    await this.upsertDatasetRowLocator(this.pool, {
+      datasetRowId,
+      dataTemplateVersionId: version.dataTemplateVersionId,
+      testCaseId: version.testCaseId,
+      tenantId: version.tenantId,
+      projectId: version.projectId,
+    });
+    return this.getDatasetRow(datasetRowId);
+  }
+
+  async updateDatasetRow(
+    datasetRowId: string,
+    input: ControlPlaneUpdateDatasetRowInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDatasetRowRecord | undefined> {
+    const datasetRow = await this.getDatasetRow(datasetRowId);
+    if (!datasetRow) {
+      return undefined;
+    }
+
+    const template = await this.getDataTemplateVersionById(datasetRow.dataTemplateVersionId);
+    if (!template) {
+      return undefined;
+    }
+
+    const nextValues = input.values ? validateDatasetValues(template.schema, input.values) : datasetRow.values;
+    const table = this.tableName(datasetRow.tenantId, 'dataset_rows');
+    const result = await this.pool.query<DatasetRow>(
+      `update ${table}
+       set name = coalesce($2, name),
+           values_json = $3::jsonb,
+           updated_by = $4,
+           updated_at = now()
+       where dataset_row_id = $1
+       returning dataset_row_id, test_case_id, data_template_version_id, tenant_id, project_id,
+                 name, status, values_json, created_by, updated_by, created_at, updated_at`,
+      [datasetRowId, input.name ?? null, JSON.stringify(nextValues), actor.subjectId],
+    );
+    return result.rows[0] ? mapDatasetRow(result.rows[0]) : undefined;
+  }
+
+  async archiveDatasetRow(
+    datasetRowId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDatasetRowRecord | undefined> {
+    const datasetRow = await this.getDatasetRow(datasetRowId);
+    if (!datasetRow) {
+      return undefined;
+    }
+
+    const locator = await this.getDatasetRowLocator(datasetRowId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const bindingsTable = this.tableName(locator.tenant_id, 'case_default_dataset_bindings');
+    const bindingResult = await this.pool.query<{ test_case_version_id: string }>(
+      `select test_case_version_id
+       from ${bindingsTable}
+       where dataset_row_id = $1
+       limit 1`,
+      [datasetRowId],
+    );
+    if (bindingResult.rows.length > 0) {
+      throw new ControlPlaneRequestError(409, 'DEFAULT_DATASET_IN_USE', 'dataset row is currently bound as the default dataset');
+    }
+
+    const table = this.tableName(datasetRow.tenantId, 'dataset_rows');
+    const result = await this.pool.query<DatasetRow>(
+      `update ${table}
+       set status = 'archived',
+           updated_by = $2,
+           updated_at = now()
+       where dataset_row_id = $1
+       returning dataset_row_id, test_case_id, data_template_version_id, tenant_id, project_id,
+                 name, status, values_json, created_by, updated_by, created_at, updated_at`,
+      [datasetRowId, actor.subjectId],
+    );
+    return result.rows[0] ? mapDatasetRow(result.rows[0]) : undefined;
+  }
+
+  async bindDefaultDatasetRow(
+    testCaseVersionId: string,
+    datasetRowId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseVersionRecord | undefined> {
+    const version = await this.getTestCaseVersion(testCaseVersionId);
+    if (!version) {
+      return undefined;
+    }
+    const datasetRow = await this.getDatasetRow(datasetRowId);
+    if (!datasetRow) {
+      return undefined;
+    }
+    if (datasetRow.dataTemplateVersionId !== version.dataTemplateVersionId) {
+      throw new ControlPlaneRequestError(400, 'DATASET_TEMPLATE_MISMATCH', 'dataset row does not belong to the case version template');
+    }
+    if (datasetRow.status !== 'active') {
+      throw new ControlPlaneRequestError(409, 'DATASET_ROW_ARCHIVED', 'dataset row is archived');
+    }
+
+    const table = this.tableName(version.tenantId, 'case_default_dataset_bindings');
+    await this.pool.query(
+      `insert into ${table} (test_case_version_id, dataset_row_id, tenant_id, project_id, bound_at, bound_by)
+       values ($1, $2, $3, $4, now(), $5)
+       on conflict (test_case_version_id) do update set
+         dataset_row_id = excluded.dataset_row_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         bound_at = now(),
+         bound_by = excluded.bound_by`,
+      [testCaseVersionId, datasetRowId, version.tenantId, version.projectId, actor.subjectId],
+    );
+    return this.getTestCaseVersion(testCaseVersionId);
+  }
+
+  async enqueueCaseVersionRun(input: ControlPlaneEnqueueCaseVersionRunInput): Promise<ControlPlaneEnqueueWebRunResult> {
+    const version = await this.getTestCaseVersion(input.testCaseVersionId);
+    if (!version) {
+      throw new ControlPlaneRequestError(404, 'TEST_CASE_VERSION_NOT_FOUND', 'test case version not found');
+    }
+    if (version.tenantId !== input.tenantId || version.projectId !== input.projectId) {
+      throw new ControlPlaneRequestError(403, 'CASE_VERSION_SCOPE_MISMATCH', 'test case version does not belong to the requested tenant/project');
+    }
+
+    const datasetRow = input.datasetRowId
+      ? await this.getDatasetRow(input.datasetRowId)
+      : version.defaultDatasetRowId
+        ? await this.getDatasetRow(version.defaultDatasetRowId)
+        : undefined;
+    if (!datasetRow) {
+      throw new ControlPlaneRequestError(400, 'DEFAULT_DATASET_MISSING', 'no dataset row is available for the requested case version');
+    }
+    if (datasetRow.dataTemplateVersionId !== version.dataTemplateVersionId) {
+      throw new ControlPlaneRequestError(400, 'DATASET_TEMPLATE_MISMATCH', 'dataset row does not belong to the requested case version');
+    }
+    if (datasetRow.status !== 'active') {
+      throw new ControlPlaneRequestError(409, 'DATASET_ROW_ARCHIVED', 'dataset row is archived');
+    }
+
+    const runId = randomUUID();
+    const runItemId = randomUUID();
+    const jobId = randomUUID();
+    const queueEventId = randomUUID();
+    const now = new Date().toISOString();
+    const workerVariableContext = {
+      ...datasetRow.values,
+      ...(input.variableContext ?? {}),
+    };
+    const inputSnapshot = buildExecutionInputSnapshot(
+      version.plan,
+      version.envProfile,
+      datasetRow.values,
+      input.variableContext,
+    );
+    const requiredCapabilities = normalizeCapabilities(
+      input.requiredCapabilities ?? buildWebRunRequiredCapabilities(version.plan, version.envProfile),
+    );
+    const job: WebWorkerJob = {
+      jobId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      runId,
+      runItemId,
+      attemptNo: 0,
+      traceId: input.traceId ?? randomUUID(),
+      correlationId: input.correlationId,
+      plan: version.plan,
+      envProfile: version.envProfile,
+      variableContext: workerVariableContext,
+    };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const tenantSchema = await this.ensureTenantSchema(input.tenantId, client);
+      const runsTable = this.tableName(tenantSchema, 'runs');
+      const runItemsTable = this.tableName(tenantSchema, 'run_items');
+      await client.query(
+        `insert into ${runsTable} (
+           run_id, tenant_id, project_id, name, mode, selection_kind, status, last_event_id, created_at, updated_at
+         ) values ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, $8)`,
+        [
+          runId,
+          input.tenantId,
+          input.projectId,
+          input.name,
+          input.mode ?? 'standard',
+          'case_version',
+          queueEventId,
+          now,
+        ],
+      );
+      await this.upsertRunLocator(client, runId, input.tenantId, input.projectId);
+      await client.query(
+        `insert into ${runItemsTable} (
+           run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
+           required_capabilities_json, job_payload_json, test_case_id, test_case_version_id,
+           data_template_version_id, dataset_row_id, input_snapshot_json, source_recording_id,
+           last_event_id, created_at, updated_at
+         ) values (
+           $1, $2, $3, $4, $5, 0, 'pending', 'web',
+           $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $15
+         )`,
+        [
+          runItemId,
+          runId,
+          jobId,
+          input.tenantId,
+          input.projectId,
+          JSON.stringify(requiredCapabilities),
+          JSON.stringify(job),
+          version.testCaseId,
+          version.testCaseVersionId,
+          version.dataTemplateVersionId,
+          datasetRow.datasetRowId,
+          JSON.stringify(inputSnapshot),
+          version.sourceRecordingId,
+          queueEventId,
+          now,
+        ],
+      );
+      await this.upsertRunItemLocator(client, {
+        runItemId,
+        runId,
+        jobId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+      });
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return {
+      run: {
+        runId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        name: input.name,
+        mode: input.mode ?? 'standard',
+        selectionKind: 'case_version',
+        status: 'queued',
+        startedAt: null,
+        finishedAt: null,
+        lastEventId: queueEventId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      runItem: {
+        runItemId,
+        runId,
+        jobId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        attemptNo: 0,
+        status: 'pending',
+        jobKind: 'web',
+        requiredCapabilities,
+        testCaseId: version.testCaseId,
+        testCaseVersionId: version.testCaseVersionId,
+        dataTemplateVersionId: version.dataTemplateVersionId,
+        datasetRowId: datasetRow.datasetRowId,
+        inputSnapshot,
+        sourceRecordingId: version.sourceRecordingId,
+        assignedAgentId: null,
+        leaseToken: null,
+        controlState: 'active',
+        controlReason: null,
+        startedAt: null,
+        finishedAt: null,
+        lastEventId: queueEventId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      job,
+    };
   }
 
   async resolvePrincipal(actor: ControlPlaneAuthenticatedActor): Promise<ControlPlanePrincipal> {
@@ -585,17 +1368,19 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
            project_id,
            name,
            mode,
+           selection_kind,
            status,
            last_event_id,
            created_at,
            updated_at
-         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           runId,
           input.tenantId,
           input.projectId,
           input.name,
           input.mode ?? 'standard',
+          'inline_web_plan',
           'queued',
           queueEventId,
           now,
@@ -657,6 +1442,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         projectId: input.projectId,
         name: input.name,
         mode: input.mode ?? 'standard',
+        selectionKind: 'inline_web_plan',
         status: 'queued',
         startedAt: null,
         finishedAt: null,
@@ -1034,7 +1820,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const runsTable = this.tableName(tenantSchema, 'runs');
       const runItemsTable = this.tableName(tenantSchema, 'run_items');
       const runResult = await client.query<RunProjectionRow>(
-        `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+        `select run_id, tenant_id, project_id, name, mode, selection_kind, status, started_at, finished_at, last_event_id, created_at, updated_at
          from ${runsTable}
          where run_id = $1
          limit 1
@@ -1090,7 +1876,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const runsTable = this.tableName(tenantSchema, 'runs');
       const runItemsTable = this.tableName(tenantSchema, 'run_items');
       const runResult = await client.query<RunProjectionRow>(
-        `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+        `select run_id, tenant_id, project_id, name, mode, selection_kind, status, started_at, finished_at, last_event_id, created_at, updated_at
          from ${runsTable}
          where run_id = $1
          limit 1
@@ -1104,20 +1890,21 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       await client.query(
         `update ${runItemsTable}
-         set control_state = 'active',
-             control_reason = null,
+         set control_state = case
+               when status in ('passed', 'failed', 'canceled') then control_state
+               else 'pause_requested'
+             end,
+             control_reason = case
+               when status in ('passed', 'failed', 'canceled') then control_reason
+               else 'run paused by control plane'
+             end,
              updated_at = now()
-         where run_id = $1
-           and control_state in ('pause_requested', 'paused')`,
+         where run_id = $1`,
         [runId],
       );
       await client.query(
         `update ${runsTable}
-         set status = case
-               when status = 'canceling' then status
-               else status
-             end,
-             updated_at = now()
+         set updated_at = now()
          where run_id = $1`,
         [runId],
       );
@@ -1146,7 +1933,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const runItemsTable = this.tableName(tenantSchema, 'run_items');
       const jobLeasesTable = this.tableName(tenantSchema, 'job_leases');
       const runResult = await client.query<RunProjectionRow>(
-        `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+        `select run_id, tenant_id, project_id, name, mode, selection_kind, status, started_at, finished_at, last_event_id, created_at, updated_at
          from ${runsTable}
          where run_id = $1
          limit 1
@@ -1578,7 +2365,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
     const runsTable = this.tableName(locator.tenant_id, 'runs');
     const result = await this.pool.query<RunProjectionRow>(
-      `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+      `select run_id, tenant_id, project_id, name, mode, selection_kind, status, started_at, finished_at, last_event_id, created_at, updated_at
        from ${runsTable}
        where run_id = $1
        limit 1`,
@@ -1596,7 +2383,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.tenantId, query.projectId];
     const runsTable = this.tableName(tenantSchema, 'runs');
-    let sql = `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+    let sql = `select run_id, tenant_id, project_id, name, mode, selection_kind, status, started_at, finished_at, last_event_id, created_at, updated_at
        from ${runsTable}
        where tenant_id = $1
          and project_id = $2`;
@@ -1628,7 +2415,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const runItemsTable = this.tableName(locator.tenant_id, 'run_items');
     const result = await this.pool.query<RunItemProjectionRow>(
       `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-              required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
+              required_capabilities_json, test_case_id, test_case_version_id, data_template_version_id, dataset_row_id,
+              input_snapshot_json, source_recording_id, assigned_agent_id, lease_token, control_state, control_reason,
               started_at, finished_at, last_event_id, created_at, updated_at
        from ${runItemsTable}
        where run_item_id = $1
@@ -1648,7 +2436,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const values: unknown[] = [query.runId];
     const runItemsTable = this.tableName(locator.tenant_id, 'run_items');
     let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-                      required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
+                      required_capabilities_json, test_case_id, test_case_version_id, data_template_version_id, dataset_row_id,
+                      input_snapshot_json, source_recording_id, assigned_agent_id, lease_token, control_state, control_reason,
                       started_at, finished_at, last_event_id, created_at, updated_at
        from ${runItemsTable}
        where run_id = $1`;
@@ -1993,6 +2782,10 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   private async ensureTenantSchema(tenantId: string, executor: SqlPoolLike | SqlPoolClientLike = this.pool): Promise<string> {
     const existing = await this.resolveTenantSchema(tenantId, executor);
     if (existing) {
+      if (!this.ensuredTenantSchemas.has(existing)) {
+        await this.reconcileTenantSchema(existing, executor);
+        this.ensuredTenantSchemas.add(existing);
+      }
       return existing;
     }
 
@@ -2004,9 +2797,41 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          updated_at = now()`,
       [tenantId, tenantId],
     );
-    await executor.query(buildTenantBusinessSchemaSql(tenantId));
+    await this.reconcileTenantSchema(tenantId, executor);
     this.ensuredTenantSchemas.add(tenantId);
     return tenantId;
+  }
+
+  private async reconcileExistingTenantSchemas(): Promise<void> {
+    const tenantIds = await this.listTenantSchemas().catch(() => []);
+    for (const tenantId of tenantIds) {
+      await this.reconcileTenantSchema(tenantId, this.pool);
+      this.ensuredTenantSchemas.add(tenantId);
+    }
+  }
+
+  private async reconcileTenantSchema(
+    tenantSchema: string,
+    executor: SqlPoolLike | SqlPoolClientLike,
+  ): Promise<void> {
+    await executor.query(buildTenantBusinessSchemaSql(tenantSchema));
+
+    const runsTable = this.tableName(tenantSchema, 'runs');
+    const runItemsTable = this.tableName(tenantSchema, 'run_items');
+
+    await executor.query(
+      `alter table ${runsTable}
+       add column if not exists selection_kind text null`,
+    );
+    await executor.query(
+      `alter table ${runItemsTable}
+       add column if not exists test_case_id uuid null,
+       add column if not exists test_case_version_id uuid null,
+       add column if not exists data_template_version_id uuid null,
+       add column if not exists dataset_row_id uuid null,
+       add column if not exists input_snapshot_json jsonb not null default '{}'::jsonb,
+       add column if not exists source_recording_id uuid null`,
+    );
   }
 
   private async getRunLocator(runId: string, executor: SqlPoolLike | SqlPoolClientLike = this.pool): Promise<EntityLocatorRow | undefined> {
@@ -2016,6 +2841,62 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
        where run_id = $1
        limit 1`,
       [runId],
+    );
+    return result.rows[0];
+  }
+
+  private async getTestCaseLocator(
+    testCaseId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, test_case_id
+       from test_case_locators
+       where test_case_id = $1
+       limit 1`,
+      [testCaseId],
+    );
+    return result.rows[0];
+  }
+
+  private async getTestCaseVersionLocator(
+    testCaseVersionId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, test_case_id, test_case_version_id
+       from test_case_version_locators
+       where test_case_version_id = $1
+       limit 1`,
+      [testCaseVersionId],
+    );
+    return result.rows[0];
+  }
+
+  private async getDataTemplateVersionLocator(
+    dataTemplateVersionId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, test_case_id, data_template_id, data_template_version_id
+       from data_template_version_locators
+       where data_template_version_id = $1
+       limit 1`,
+      [dataTemplateVersionId],
+    );
+    return result.rows[0];
+  }
+
+  private async getDatasetRowLocator(
+    datasetRowId: string,
+    executor: SqlPoolLike | SqlPoolClientLike = this.pool,
+  ): Promise<EntityLocatorRow | undefined> {
+    const result = await executor.query<EntityLocatorRow>(
+      `select tenant_id, project_id, test_case_id, data_template_version_id, dataset_row_id
+       from dataset_row_locators
+       where dataset_row_id = $1
+       limit 1`,
+      [datasetRowId],
     );
     return result.rows[0];
   }
@@ -2124,6 +3005,100 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     );
   }
 
+  private async upsertTestCaseLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { testCaseId: string; tenantId: string; projectId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into test_case_locators (test_case_id, tenant_id, project_id)
+       values ($1, $2, $3)
+       on conflict (test_case_id) do update set
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.testCaseId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async upsertTestCaseVersionLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { testCaseVersionId: string; testCaseId: string; tenantId: string; projectId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into test_case_version_locators (test_case_version_id, test_case_id, tenant_id, project_id)
+       values ($1, $2, $3, $4)
+       on conflict (test_case_version_id) do update set
+         test_case_id = excluded.test_case_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.testCaseVersionId, input.testCaseId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async upsertDataTemplateLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: { dataTemplateId: string; testCaseId: string; tenantId: string; projectId: string },
+  ): Promise<void> {
+    await executor.query(
+      `insert into data_template_locators (data_template_id, test_case_id, tenant_id, project_id)
+       values ($1, $2, $3, $4)
+       on conflict (data_template_id) do update set
+         test_case_id = excluded.test_case_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.dataTemplateId, input.testCaseId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async upsertDataTemplateVersionLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: {
+      dataTemplateVersionId: string;
+      dataTemplateId: string;
+      testCaseId: string;
+      tenantId: string;
+      projectId: string;
+    },
+  ): Promise<void> {
+    await executor.query(
+      `insert into data_template_version_locators (
+         data_template_version_id, data_template_id, test_case_id, tenant_id, project_id
+       ) values ($1, $2, $3, $4, $5)
+       on conflict (data_template_version_id) do update set
+         data_template_id = excluded.data_template_id,
+         test_case_id = excluded.test_case_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.dataTemplateVersionId, input.dataTemplateId, input.testCaseId, input.tenantId, input.projectId],
+    );
+  }
+
+  private async upsertDatasetRowLocator(
+    executor: SqlPoolLike | SqlPoolClientLike,
+    input: {
+      datasetRowId: string;
+      dataTemplateVersionId: string;
+      testCaseId: string;
+      tenantId: string;
+      projectId: string;
+    },
+  ): Promise<void> {
+    await executor.query(
+      `insert into dataset_row_locators (dataset_row_id, data_template_version_id, test_case_id, tenant_id, project_id)
+       values ($1, $2, $3, $4, $5)
+       on conflict (dataset_row_id) do update set
+         data_template_version_id = excluded.data_template_version_id,
+         test_case_id = excluded.test_case_id,
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         updated_at = now()`,
+      [input.datasetRowId, input.dataTemplateVersionId, input.testCaseId, input.tenantId, input.projectId],
+    );
+  }
+
   private async upsertAgentLocator(
     executor: SqlPoolLike | SqlPoolClientLike,
     agentId: string,
@@ -2174,6 +3149,501 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          updated_at = now()`,
       [input.artifactId, input.runId, input.runItemId, input.tenantId, input.projectId],
     );
+  }
+
+  private async getTestCaseVersionForUpdate(
+    client: SqlPoolClientLike,
+    tenantSchema: string,
+    testCaseVersionId: string,
+  ): Promise<ControlPlaneTestCaseVersionRecord | undefined> {
+    const versionsTable = this.tableName(tenantSchema, 'test_case_versions');
+    const bindingsTable = this.tableName(tenantSchema, 'case_default_dataset_bindings');
+    const result = await client.query<TestCaseVersionRow>(
+      `select version.test_case_version_id, version.test_case_id, version.tenant_id, version.project_id,
+              version.version_no, version.version_label, version.status, version.plan_json, version.env_profile_json,
+              version.data_template_id, version.data_template_version_id, binding.dataset_row_id as default_dataset_row_id,
+              version.source_recording_id, version.source_run_id, version.derived_from_case_version_id,
+              version.change_summary, version.created_by, version.created_at
+       from ${versionsTable} version
+       left join ${bindingsTable} binding
+         on binding.test_case_version_id = version.test_case_version_id
+       where version.test_case_version_id = $1
+       limit 1
+       for update of version`,
+      [testCaseVersionId],
+    );
+    return result.rows[0] ? mapTestCaseVersion(result.rows[0]) : undefined;
+  }
+
+  private async getDataTemplateVersionById(
+    dataTemplateVersionId: string,
+  ): Promise<ControlPlaneDataTemplateVersionRecord | undefined> {
+    const locator = await this.getDataTemplateVersionLocator(dataTemplateVersionId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const table = this.tableName(locator.tenant_id, 'data_template_versions');
+    const result = await this.pool.query<DataTemplateVersionRow>(
+      `select data_template_id, data_template_version_id, test_case_id, tenant_id, project_id,
+              version_no, schema_json, validation_rules_json, null::text as default_dataset_row_id,
+              created_by, created_at
+       from ${table}
+       where data_template_version_id = $1
+       limit 1`,
+      [dataTemplateVersionId],
+    );
+    return result.rows[0] ? mapDataTemplateVersion(result.rows[0]) : undefined;
+  }
+
+  async getDatasetRow(datasetRowId: string): Promise<ControlPlaneDatasetRowRecord | undefined> {
+    const locator = await this.getDatasetRowLocator(datasetRowId);
+    if (!locator?.tenant_id) {
+      return undefined;
+    }
+
+    const table = this.tableName(locator.tenant_id, 'dataset_rows');
+    const result = await this.pool.query<DatasetRow>(
+      `select dataset_row_id, test_case_id, data_template_version_id, tenant_id, project_id,
+              name, status, values_json, created_by, updated_by, created_at, updated_at
+       from ${table}
+       where dataset_row_id = $1
+       limit 1`,
+      [datasetRowId],
+    );
+    return result.rows[0] ? mapDatasetRow(result.rows[0]) : undefined;
+  }
+
+  private async insertNewTestCaseBundle(
+    client: SqlPoolClientLike,
+    tenantSchema: string,
+    input: ControlPlaneCreateTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseResult> {
+    const testCasesTable = this.tableName(tenantSchema, 'test_cases');
+    const dataTemplatesTable = this.tableName(tenantSchema, 'data_templates');
+    const dataTemplateVersionsTable = this.tableName(tenantSchema, 'data_template_versions');
+    const versionsTable = this.tableName(tenantSchema, 'test_case_versions');
+    const datasetRowsTable = this.tableName(tenantSchema, 'dataset_rows');
+    const bindingsTable = this.tableName(tenantSchema, 'case_default_dataset_bindings');
+    const now = new Date().toISOString();
+    const testCaseId = randomUUID();
+    const dataTemplateId = randomUUID();
+    const dataTemplateVersionId = randomUUID();
+    const testCaseVersionId = randomUUID();
+    const datasetRowId = randomUUID();
+    const schema = deriveTemplateSchemaFromPlan(input.plan, input.defaultDataset?.values);
+    const defaultValues = ensureDefaultDatasetValues(schema, input.defaultDataset?.values);
+    const versionStatus = input.publish ? 'published' : 'draft';
+    const caseStatus = input.publish ? 'active' : 'draft';
+
+    await client.query(
+      `insert into ${testCasesTable} (
+         test_case_id, tenant_id, project_id, data_template_id, name, status,
+         latest_version_id, latest_published_version_id, created_by, updated_by, created_at, updated_at
+       ) values (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10, $10
+       )`,
+      [
+        testCaseId,
+        input.tenantId,
+        input.projectId,
+        dataTemplateId,
+        input.name,
+        caseStatus,
+        testCaseVersionId,
+        input.publish ? testCaseVersionId : null,
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${dataTemplatesTable} (
+         data_template_id, test_case_id, tenant_id, project_id, name, status, latest_version_id, created_at, updated_at
+       ) values ($1, $2, $3, $4, $5, 'active', $6, $7, $7)`,
+      [
+        dataTemplateId,
+        testCaseId,
+        input.tenantId,
+        input.projectId,
+        `${input.name} template`,
+        dataTemplateVersionId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${dataTemplateVersionsTable} (
+         data_template_version_id, data_template_id, test_case_id, tenant_id, project_id,
+         version_no, schema_json, validation_rules_json, created_by, created_at
+       ) values ($1, $2, $3, $4, $5, 1, $6::jsonb, $7::jsonb, $8, $9)`,
+      [
+        dataTemplateVersionId,
+        dataTemplateId,
+        testCaseId,
+        input.tenantId,
+        input.projectId,
+        JSON.stringify(schema),
+        JSON.stringify({ allow_extra_fields: false }),
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${versionsTable} (
+         test_case_version_id, test_case_id, tenant_id, project_id, version_no, version_label, status,
+         plan_json, env_profile_json, data_template_id, data_template_version_id,
+         source_recording_id, source_run_id, derived_from_case_version_id, change_summary, created_by, created_at
+       ) values (
+         $1, $2, $3, $4, 1, $5, $6, $7::jsonb, $8::jsonb, $9, $10, null, null, null, $11, $12, $13
+       )`,
+      [
+        testCaseVersionId,
+        testCaseId,
+        input.tenantId,
+        input.projectId,
+        input.versionLabel ?? 'v1',
+        versionStatus,
+        JSON.stringify(input.plan),
+        JSON.stringify(input.envProfile),
+        dataTemplateId,
+        dataTemplateVersionId,
+        input.changeSummary ?? null,
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${datasetRowsTable} (
+         dataset_row_id, data_template_version_id, test_case_id, tenant_id, project_id, name, status, values_json,
+         created_by, updated_by, created_at, updated_at
+       ) values ($1, $2, $3, $4, $5, $6, 'active', $7::jsonb, $8, $8, $9, $9)`,
+      [
+        datasetRowId,
+        dataTemplateVersionId,
+        testCaseId,
+        input.tenantId,
+        input.projectId,
+        input.defaultDataset?.name ?? 'default',
+        JSON.stringify(defaultValues),
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${bindingsTable} (test_case_version_id, dataset_row_id, tenant_id, project_id, bound_at, bound_by)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [testCaseVersionId, datasetRowId, input.tenantId, input.projectId, now, actor.subjectId],
+    );
+
+    await this.upsertTestCaseLocator(client, { testCaseId, tenantId: input.tenantId, projectId: input.projectId });
+    await this.upsertDataTemplateLocator(client, { dataTemplateId, testCaseId, tenantId: input.tenantId, projectId: input.projectId });
+    await this.upsertDataTemplateVersionLocator(client, {
+      dataTemplateVersionId,
+      dataTemplateId,
+      testCaseId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+    });
+    await this.upsertTestCaseVersionLocator(client, {
+      testCaseVersionId,
+      testCaseId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+    });
+    await this.upsertDatasetRowLocator(client, {
+      datasetRowId,
+      dataTemplateVersionId,
+      testCaseId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+    });
+
+    return {
+      testCase: {
+        testCaseId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        dataTemplateId,
+        name: input.name,
+        status: caseStatus,
+        latestVersionId: testCaseVersionId,
+        latestPublishedVersionId: input.publish ? testCaseVersionId : null,
+        createdBy: actor.subjectId,
+        updatedBy: actor.subjectId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      version: {
+        testCaseVersionId,
+        testCaseId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        versionNo: 1,
+        versionLabel: input.versionLabel ?? 'v1',
+        status: versionStatus,
+        plan: input.plan,
+        envProfile: input.envProfile,
+        dataTemplateId,
+        dataTemplateVersionId,
+        defaultDatasetRowId: datasetRowId,
+        sourceRecordingId: null,
+        sourceRunId: null,
+        derivedFromCaseVersionId: null,
+        changeSummary: input.changeSummary ?? null,
+        createdBy: actor.subjectId,
+        createdAt: now,
+      },
+      dataTemplateVersion: {
+        dataTemplateId,
+        dataTemplateVersionId,
+        testCaseId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        versionNo: 1,
+        schema,
+        validationRules: { allow_extra_fields: false },
+        defaultDatasetRowId: datasetRowId,
+        createdBy: actor.subjectId,
+        createdAt: now,
+      },
+      defaultDatasetRow: {
+        datasetRowId,
+        testCaseId,
+        dataTemplateVersionId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        name: input.defaultDataset?.name ?? 'default',
+        status: 'active',
+        values: defaultValues,
+        createdBy: actor.subjectId,
+        updatedBy: actor.subjectId,
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+  }
+
+  private async insertAdditionalTestCaseVersionBundle(
+    client: SqlPoolClientLike,
+    tenantSchema: string,
+    testCaseId: string,
+    input: ControlPlaneCreateTestCaseVersionInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseVersionResult> {
+    const testCasesTable = this.tableName(tenantSchema, 'test_cases');
+    const dataTemplatesTable = this.tableName(tenantSchema, 'data_templates');
+    const dataTemplateVersionsTable = this.tableName(tenantSchema, 'data_template_versions');
+    const versionsTable = this.tableName(tenantSchema, 'test_case_versions');
+    const datasetRowsTable = this.tableName(tenantSchema, 'dataset_rows');
+    const bindingsTable = this.tableName(tenantSchema, 'case_default_dataset_bindings');
+    const caseResult = await client.query<TestCaseRow>(
+      `select test_case_id, tenant_id, project_id, data_template_id, name, status,
+              latest_version_id, latest_published_version_id, created_by, updated_by, created_at, updated_at
+       from ${testCasesTable}
+       where test_case_id = $1
+       limit 1
+       for update`,
+      [testCaseId],
+    );
+    if (caseResult.rows.length === 0) {
+      throw new ControlPlaneRequestError(404, 'TEST_CASE_NOT_FOUND', 'test case not found');
+    }
+    const testCase = mapTestCase(caseResult.rows[0]);
+    const nextVersionNoResult = await client.query<{ next_version_no: number }>(
+      `select coalesce(max(version_no), 0)::int + 1 as next_version_no
+       from ${versionsTable}
+       where test_case_id = $1`,
+      [testCaseId],
+    );
+    const nextVersionNo = nextVersionNoResult.rows[0]?.next_version_no ?? 1;
+    const dataTemplateVersionNoResult = await client.query<{ next_version_no: number }>(
+      `select coalesce(max(version_no), 0)::int + 1 as next_version_no
+       from ${dataTemplateVersionsTable}
+       where data_template_id = $1`,
+      [testCase.dataTemplateId],
+    );
+    const nextTemplateVersionNo = dataTemplateVersionNoResult.rows[0]?.next_version_no ?? 1;
+    const latestDefaultRow = testCase.latestVersionId
+      ? await this.getTestCaseVersion(testCase.latestVersionId)
+      : undefined;
+    const inheritedDefaultValues = latestDefaultRow?.defaultDatasetRowId
+      ? (await this.getDatasetRow(latestDefaultRow.defaultDatasetRowId))?.values
+      : undefined;
+    const schema = deriveTemplateSchemaFromPlan(input.plan, input.defaultDataset?.values ?? inheritedDefaultValues ?? {});
+    const defaultValues = input.defaultDataset?.values
+      ? ensureDefaultDatasetValues(schema, input.defaultDataset.values)
+      : inheritedDefaultValues
+        ? validateDatasetValues(schema, inheritedDefaultValues)
+        : ensureDefaultDatasetValues(schema, undefined);
+    const now = new Date().toISOString();
+    const testCaseVersionId = randomUUID();
+    const dataTemplateVersionId = randomUUID();
+    const datasetRowId = randomUUID();
+    const versionStatus = input.publish ? 'published' : 'draft';
+
+    await client.query(
+      `insert into ${dataTemplateVersionsTable} (
+         data_template_version_id, data_template_id, test_case_id, tenant_id, project_id,
+         version_no, schema_json, validation_rules_json, created_by, created_at
+       ) values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)`,
+      [
+        dataTemplateVersionId,
+        testCase.dataTemplateId,
+        testCaseId,
+        testCase.tenantId,
+        testCase.projectId,
+        nextTemplateVersionNo,
+        JSON.stringify(schema),
+        JSON.stringify({ allow_extra_fields: false }),
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `update ${dataTemplatesTable}
+       set latest_version_id = $2,
+           updated_at = now()
+       where data_template_id = $1`,
+      [testCase.dataTemplateId, dataTemplateVersionId],
+    );
+    await client.query(
+      `insert into ${versionsTable} (
+         test_case_version_id, test_case_id, tenant_id, project_id, version_no, version_label, status,
+         plan_json, env_profile_json, data_template_id, data_template_version_id,
+         source_recording_id, source_run_id, derived_from_case_version_id, change_summary, created_by, created_at
+       ) values (
+         $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11,
+         null, null, $12, $13, $14, $15
+       )`,
+      [
+        testCaseVersionId,
+        testCaseId,
+        testCase.tenantId,
+        testCase.projectId,
+        nextVersionNo,
+        input.versionLabel ?? `v${nextVersionNo}`,
+        versionStatus,
+        JSON.stringify(input.plan),
+        JSON.stringify(input.envProfile),
+        testCase.dataTemplateId,
+        dataTemplateVersionId,
+        testCase.latestVersionId,
+        input.changeSummary ?? null,
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${datasetRowsTable} (
+         dataset_row_id, data_template_version_id, test_case_id, tenant_id, project_id, name, status, values_json,
+         created_by, updated_by, created_at, updated_at
+       ) values ($1, $2, $3, $4, $5, $6, 'active', $7::jsonb, $8, $8, $9, $9)`,
+      [
+        datasetRowId,
+        dataTemplateVersionId,
+        testCaseId,
+        testCase.tenantId,
+        testCase.projectId,
+        input.defaultDataset?.name ?? 'default',
+        JSON.stringify(defaultValues),
+        actor.subjectId,
+        now,
+      ],
+    );
+    await client.query(
+      `insert into ${bindingsTable} (test_case_version_id, dataset_row_id, tenant_id, project_id, bound_at, bound_by)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [testCaseVersionId, datasetRowId, testCase.tenantId, testCase.projectId, now, actor.subjectId],
+    );
+    await client.query(
+      `update ${testCasesTable}
+       set latest_version_id = $2,
+           latest_published_version_id = case when $3 then $2 else latest_published_version_id end,
+           status = case when $3 then 'active' else status end,
+           updated_by = $4,
+           updated_at = now()
+       where test_case_id = $1`,
+      [testCaseId, testCaseVersionId, input.publish === true, actor.subjectId],
+    );
+
+    await this.upsertDataTemplateVersionLocator(client, {
+      dataTemplateVersionId,
+      dataTemplateId: testCase.dataTemplateId,
+      testCaseId,
+      tenantId: testCase.tenantId,
+      projectId: testCase.projectId,
+    });
+    await this.upsertTestCaseVersionLocator(client, {
+      testCaseVersionId,
+      testCaseId,
+      tenantId: testCase.tenantId,
+      projectId: testCase.projectId,
+    });
+    await this.upsertDatasetRowLocator(client, {
+      datasetRowId,
+      dataTemplateVersionId,
+      testCaseId,
+      tenantId: testCase.tenantId,
+      projectId: testCase.projectId,
+    });
+
+    return {
+      testCase: {
+        ...testCase,
+        status: input.publish ? 'active' : testCase.status,
+        latestVersionId: testCaseVersionId,
+        latestPublishedVersionId: input.publish ? testCaseVersionId : testCase.latestPublishedVersionId,
+        updatedBy: actor.subjectId,
+        updatedAt: now,
+      },
+      version: {
+        testCaseVersionId,
+        testCaseId,
+        tenantId: testCase.tenantId,
+        projectId: testCase.projectId,
+        versionNo: nextVersionNo,
+        versionLabel: input.versionLabel ?? `v${nextVersionNo}`,
+        status: versionStatus,
+        plan: input.plan,
+        envProfile: input.envProfile,
+        dataTemplateId: testCase.dataTemplateId,
+        dataTemplateVersionId,
+        defaultDatasetRowId: datasetRowId,
+        sourceRecordingId: null,
+        sourceRunId: null,
+        derivedFromCaseVersionId: testCase.latestVersionId,
+        changeSummary: input.changeSummary ?? null,
+        createdBy: actor.subjectId,
+        createdAt: now,
+      },
+      dataTemplateVersion: {
+        dataTemplateId: testCase.dataTemplateId,
+        dataTemplateVersionId,
+        testCaseId,
+        tenantId: testCase.tenantId,
+        projectId: testCase.projectId,
+        versionNo: nextTemplateVersionNo,
+        schema,
+        validationRules: { allow_extra_fields: false },
+        defaultDatasetRowId: datasetRowId,
+        createdBy: actor.subjectId,
+        createdAt: now,
+      },
+      defaultDatasetRow: {
+        datasetRowId,
+        testCaseId,
+        dataTemplateVersionId,
+        tenantId: testCase.tenantId,
+        projectId: testCase.projectId,
+        name: input.defaultDataset?.name ?? 'default',
+        status: 'active',
+        values: defaultValues,
+        createdBy: actor.subjectId,
+        updatedBy: actor.subjectId,
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
   }
 
   private async reclaimExpiredLeases(client: SqlPoolClientLike): Promise<void> {

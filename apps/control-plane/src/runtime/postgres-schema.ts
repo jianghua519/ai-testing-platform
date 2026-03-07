@@ -32,6 +32,7 @@ create table if not exists ${schema}.runs (
   project_id text not null,
   name text null,
   mode text null,
+  selection_kind text null,
   status text not null,
   started_at timestamptz null,
   finished_at timestamptz null,
@@ -63,6 +64,110 @@ create table if not exists ${schema}.agents (
 create index if not exists idx_agents_tenant_slots_status
   on ${schema}.agents (tenant_id, status, max_parallel_slots, updated_at desc);
 
+create table if not exists ${schema}.test_cases (
+  test_case_id text primary key,
+  tenant_id text not null,
+  project_id text not null,
+  data_template_id text not null,
+  name text not null,
+  status text not null,
+  latest_version_id text null,
+  latest_published_version_id text null,
+  created_by text null,
+  updated_by text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_test_cases_data_template_id
+  on ${schema}.test_cases (data_template_id);
+
+create index if not exists idx_test_cases_tenant_project_created
+  on ${schema}.test_cases (tenant_id, project_id, created_at desc);
+
+create table if not exists ${schema}.data_templates (
+  data_template_id text primary key,
+  test_case_id text not null references ${schema}.test_cases (test_case_id),
+  tenant_id text not null,
+  project_id text not null,
+  name text not null,
+  status text not null,
+  latest_version_id text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create unique index if not exists uq_data_templates_test_case_id
+  on ${schema}.data_templates (test_case_id);
+
+create table if not exists ${schema}.data_template_versions (
+  data_template_version_id text primary key,
+  data_template_id text not null references ${schema}.data_templates (data_template_id),
+  test_case_id text not null references ${schema}.test_cases (test_case_id),
+  tenant_id text not null,
+  project_id text not null,
+  version_no integer not null,
+  schema_json jsonb not null default '{"fields":[]}'::jsonb,
+  validation_rules_json jsonb not null default '{}'::jsonb,
+  created_by text null,
+  created_at timestamptz not null default now(),
+  unique (data_template_id, version_no)
+);
+
+create index if not exists idx_data_template_versions_case_created
+  on ${schema}.data_template_versions (test_case_id, created_at desc);
+
+create table if not exists ${schema}.test_case_versions (
+  test_case_version_id text primary key,
+  test_case_id text not null references ${schema}.test_cases (test_case_id),
+  tenant_id text not null,
+  project_id text not null,
+  version_no integer not null,
+  version_label text null,
+  status text not null,
+  plan_json jsonb not null,
+  env_profile_json jsonb not null,
+  data_template_id text not null references ${schema}.data_templates (data_template_id),
+  data_template_version_id text not null references ${schema}.data_template_versions (data_template_version_id),
+  source_recording_id text null,
+  source_run_id text null,
+  derived_from_case_version_id text null,
+  change_summary text null,
+  created_by text null,
+  created_at timestamptz not null default now(),
+  unique (test_case_id, version_no)
+);
+
+create index if not exists idx_test_case_versions_case_created
+  on ${schema}.test_case_versions (test_case_id, created_at desc);
+
+create table if not exists ${schema}.dataset_rows (
+  dataset_row_id text primary key,
+  data_template_version_id text not null references ${schema}.data_template_versions (data_template_version_id),
+  test_case_id text not null references ${schema}.test_cases (test_case_id),
+  tenant_id text not null,
+  project_id text not null,
+  name text not null,
+  status text not null,
+  values_json jsonb not null default '{}'::jsonb,
+  created_by text null,
+  updated_by text null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_dataset_rows_template_created
+  on ${schema}.dataset_rows (data_template_version_id, created_at desc);
+
+create table if not exists ${schema}.case_default_dataset_bindings (
+  test_case_version_id text primary key references ${schema}.test_case_versions (test_case_version_id),
+  dataset_row_id text not null references ${schema}.dataset_rows (dataset_row_id),
+  tenant_id text not null,
+  project_id text not null,
+  bound_at timestamptz not null default now(),
+  bound_by text null
+);
+
 create table if not exists ${schema}.run_items (
   run_item_id text primary key,
   run_id text not null references ${schema}.runs (run_id),
@@ -74,6 +179,12 @@ create table if not exists ${schema}.run_items (
   job_kind text not null default 'web',
   required_capabilities_json jsonb not null default '[]'::jsonb,
   job_payload_json jsonb not null default '{}'::jsonb,
+  test_case_id text null references ${schema}.test_cases (test_case_id),
+  test_case_version_id text null references ${schema}.test_case_versions (test_case_version_id),
+  data_template_version_id text null references ${schema}.data_template_versions (data_template_version_id),
+  dataset_row_id text null references ${schema}.dataset_rows (dataset_row_id),
+  input_snapshot_json jsonb not null default '{}'::jsonb,
+  source_recording_id text null,
   assigned_agent_id text null references ${schema}.agents (agent_id),
   lease_token text null,
   control_state text not null default 'active',
@@ -241,6 +352,61 @@ create table if not exists run_item_locators (
 
 create index if not exists idx_run_item_locators_run_created
   on run_item_locators (run_id, created_at desc);
+
+create table if not exists test_case_locators (
+  test_case_id text primary key,
+  tenant_id text not null,
+  project_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists test_case_version_locators (
+  test_case_version_id text primary key,
+  test_case_id text not null,
+  tenant_id text not null,
+  project_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_test_case_version_locators_case_created
+  on test_case_version_locators (test_case_id, created_at desc);
+
+create table if not exists data_template_locators (
+  data_template_id text primary key,
+  test_case_id text not null,
+  tenant_id text not null,
+  project_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists data_template_version_locators (
+  data_template_version_id text primary key,
+  data_template_id text not null,
+  test_case_id text not null,
+  tenant_id text not null,
+  project_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_data_template_version_locators_template_created
+  on data_template_version_locators (data_template_id, created_at desc);
+
+create table if not exists dataset_row_locators (
+  dataset_row_id text primary key,
+  data_template_version_id text not null,
+  test_case_id text not null,
+  tenant_id text not null,
+  project_id text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_dataset_row_locators_template_created
+  on dataset_row_locators (data_template_version_id, created_at desc);
 
 create table if not exists artifact_locators (
   artifact_id text primary key,

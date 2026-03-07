@@ -13,6 +13,7 @@ tags:
   - name: System
   - name: Runs
   - name: RunItems
+  - name: TestAssets
   - name: Reports
   - name: IAM
   - name: Agents
@@ -47,6 +48,349 @@ paths:
               schema:
                 $ref: "#/components/schemas/Principal"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/test-cases:
+    post:
+      tags: [TestAssets]
+      summary: Create a versioned test case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestCaseCreateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseBundle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [TestAssets]
+      summary: List test cases
+      parameters:
+        - in: query
+          name: tenant_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: project_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/test-cases/{test_case_id}:
+    get:
+      tags: [TestAssets]
+      summary: Get a test case
+      parameters:
+        - in: path
+          name: test_case_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCase"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [TestAssets]
+      summary: Update mutable test case metadata
+      parameters:
+        - in: path
+          name: test_case_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestCaseUpdateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCase"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [TestAssets]
+      summary: Archive a test case
+      parameters:
+        - in: path
+          name: test_case_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCase"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/test-cases/{test_case_id}/versions:
+    get:
+      tags: [TestAssets]
+      summary: List versions for a test case
+      parameters:
+        - in: path
+          name: test_case_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseVersionListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [TestAssets]
+      summary: Create a new immutable version for a test case
+      parameters:
+        - in: path
+          name: test_case_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestCaseVersionCreateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseBundle"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/test-case-versions/{test_case_version_id}:
+    get:
+      tags: [TestAssets]
+      summary: Get a test case version
+      parameters:
+        - in: path
+          name: test_case_version_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseVersion"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/test-case-versions/{test_case_version_id}:publish:
+    post:
+      tags: [TestAssets]
+      summary: Publish a draft test case version
+      parameters:
+        - in: path
+          name: test_case_version_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseVersion"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/test-case-versions/{test_case_version_id}/data-template:
+    get:
+      tags: [TestAssets]
+      summary: Get the data template snapshot bound to a case version
+      parameters:
+        - in: path
+          name: test_case_version_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataTemplateVersion"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/test-case-versions/{test_case_version_id}/dataset-rows:
+    get:
+      tags: [TestAssets]
+      summary: List dataset rows bound to a case version template
+      parameters:
+        - in: path
+          name: test_case_version_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetRowListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [TestAssets]
+      summary: Create a dataset row for a case version template
+      parameters:
+        - in: path
+          name: test_case_version_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatasetRowCreateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetRow"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/test-case-versions/{test_case_version_id}:bind-default-dataset:
+    post:
+      tags: [TestAssets]
+      summary: Bind the default dataset row for a case version
+      parameters:
+        - in: path
+          name: test_case_version_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindDefaultDatasetRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestCaseVersion"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/v1/dataset-rows/{dataset_row_id}:
+    patch:
+      tags: [TestAssets]
+      summary: Update a dataset row
+      parameters:
+        - in: path
+          name: dataset_row_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatasetRowUpdateRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetRow"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [TestAssets]
+      summary: Archive a dataset row
+      parameters:
+        - in: path
+          name: dataset_row_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetRow"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
   /api/v1/runs:
     post:
       tags: [Runs]
@@ -828,7 +1172,7 @@ components:
           items: { type: string }
     RunCreateRequest:
       type: object
-      required: [tenant_id, project_id, name, mode]
+      required: [tenant_id, project_id, name, mode, selection]
       properties:
         tenant_id: { $ref: "#/components/schemas/UUID" }
         project_id: { $ref: "#/components/schemas/UUID" }
@@ -841,6 +1185,10 @@ components:
         execution_policy:
           $ref: "#/components/schemas/RunExecutionPolicy"
     RunSelection:
+      oneOf:
+        - $ref: "#/components/schemas/InlineWebPlanSelection"
+        - $ref: "#/components/schemas/CaseVersionSelection"
+    InlineWebPlanSelection:
       type: object
       required: [kind, plan, env_profile]
       properties:
@@ -855,6 +1203,17 @@ components:
           type: object
           description: Env profile passed through to enqueue.
           additionalProperties: true
+    CaseVersionSelection:
+      type: object
+      required: [kind, test_case_version_id]
+      properties:
+        kind:
+          type: string
+          enum: [case_version]
+        test_case_version_id:
+          $ref: "#/components/schemas/UUID"
+        dataset_row_id:
+          $ref: "#/components/schemas/UUID"
     RunExecutionPolicy:
       type: object
       properties:
@@ -867,6 +1226,218 @@ components:
         trace_id: { type: string }
         correlation_id: { type: string }
       additionalProperties: true
+    DatasetPayload:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        values:
+          type: object
+          additionalProperties: true
+    TestCaseCreateRequest:
+      type: object
+      required: [tenant_id, project_id, name, plan, env_profile]
+      properties:
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        plan:
+          type: object
+          additionalProperties: true
+        env_profile:
+          type: object
+          additionalProperties: true
+        version_label: { type: string }
+        change_summary: { type: string }
+        publish: { type: boolean }
+        default_dataset:
+          $ref: "#/components/schemas/DatasetPayload"
+    TestCaseUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        status:
+          type: string
+          enum: [draft, active, archived]
+    TestCaseVersionCreateRequest:
+      type: object
+      required: [plan, env_profile]
+      properties:
+        plan:
+          type: object
+          additionalProperties: true
+        env_profile:
+          type: object
+          additionalProperties: true
+        version_label: { type: string }
+        change_summary: { type: string }
+        publish: { type: boolean }
+        default_dataset:
+          $ref: "#/components/schemas/DatasetPayload"
+    DataTemplateField:
+      type: object
+      required: [key, source_type, value_type, required]
+      properties:
+        key: { type: string, minLength: 1 }
+        source_type:
+          type: string
+          enum: [variable_ref, file_ref, loop_source_ref]
+        value_type:
+          type: string
+          enum: [string, number, boolean, object, array, file, unknown]
+        required: { type: boolean }
+    DataTemplateSchema:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/DataTemplateField"
+    TestCase:
+      type: object
+      required: [id, tenant_id, project_id, data_template_id, name, status, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        data_template_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string }
+        status:
+          type: string
+          enum: [draft, active, archived]
+        latest_version_id: { $ref: "#/components/schemas/UUID" }
+        latest_published_version_id: { $ref: "#/components/schemas/UUID" }
+        created_by: { $ref: "#/components/schemas/UUID" }
+        updated_by: { $ref: "#/components/schemas/UUID" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+        updated_at: { $ref: "#/components/schemas/ISO8601" }
+    TestCaseListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestCase"
+        next_cursor: { type: string }
+    TestCaseVersion:
+      type: object
+      required:
+        [id, test_case_id, tenant_id, project_id, version_no, status, plan, env_profile, data_template_id, data_template_version_id, created_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        test_case_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        version_no: { type: integer, minimum: 1 }
+        version_label: { type: string }
+        status:
+          type: string
+          enum: [draft, published, archived]
+        plan:
+          type: object
+          additionalProperties: true
+        env_profile:
+          type: object
+          additionalProperties: true
+        data_template_id: { $ref: "#/components/schemas/UUID" }
+        data_template_version_id: { $ref: "#/components/schemas/UUID" }
+        default_dataset_row_id: { $ref: "#/components/schemas/UUID" }
+        source_recording_id: { $ref: "#/components/schemas/UUID" }
+        source_run_id: { $ref: "#/components/schemas/UUID" }
+        derived_from_case_version_id: { $ref: "#/components/schemas/UUID" }
+        change_summary: { type: string }
+        created_by: { $ref: "#/components/schemas/UUID" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+    TestCaseVersionListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TestCaseVersion"
+        next_cursor: { type: string }
+    DataTemplateVersion:
+      type: object
+      required:
+        [data_template_id, data_template_version_id, test_case_id, tenant_id, project_id, version_no, schema, validation_rules, created_at]
+      properties:
+        data_template_id: { $ref: "#/components/schemas/UUID" }
+        data_template_version_id: { $ref: "#/components/schemas/UUID" }
+        test_case_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        version_no: { type: integer, minimum: 1 }
+        schema:
+          $ref: "#/components/schemas/DataTemplateSchema"
+        validation_rules:
+          type: object
+          additionalProperties: true
+        default_dataset_row_id: { $ref: "#/components/schemas/UUID" }
+        created_by: { $ref: "#/components/schemas/UUID" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+    DatasetRowCreateRequest:
+      type: object
+      required: [values]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        values:
+          type: object
+          additionalProperties: true
+    DatasetRowUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        values:
+          type: object
+          additionalProperties: true
+    DatasetRow:
+      type: object
+      required: [id, test_case_id, data_template_version_id, tenant_id, project_id, name, status, values, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/UUID" }
+        test_case_id: { $ref: "#/components/schemas/UUID" }
+        data_template_version_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string }
+        status:
+          type: string
+          enum: [active, archived]
+        values:
+          type: object
+          additionalProperties: true
+        created_by: { $ref: "#/components/schemas/UUID" }
+        updated_by: { $ref: "#/components/schemas/UUID" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+        updated_at: { $ref: "#/components/schemas/ISO8601" }
+    DatasetRowListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatasetRow"
+        next_cursor: { type: string }
+    BindDefaultDatasetRequest:
+      type: object
+      required: [dataset_row_id]
+      properties:
+        dataset_row_id: { $ref: "#/components/schemas/UUID" }
+    TestCaseBundle:
+      type: object
+      required: [test_case, version, data_template, default_dataset_row]
+      properties:
+        test_case:
+          $ref: "#/components/schemas/TestCase"
+        version:
+          $ref: "#/components/schemas/TestCaseVersion"
+        data_template:
+          $ref: "#/components/schemas/DataTemplateVersion"
+        default_dataset_row:
+          $ref: "#/components/schemas/DatasetRow"
     Run:
       type: object
       required: [id, tenant_id, project_id, status, created_at]

@@ -4,6 +4,12 @@ import { pipeline } from 'node:stream/promises';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type {
+  ControlPlaneCreateDatasetRowInput,
+  ControlPlaneCreateTestCaseInput,
+  ControlPlaneCreateTestCaseVersionInput,
+  ControlPlaneDataTemplateVersionRecord,
+  ControlPlaneDatasetRowRecord,
+  ControlPlaneEnqueueCaseVersionRunInput,
   ControlPlaneAcquireLeaseInput,
   ControlPlaneAgentRecord,
   ControlPlaneArtifactRecord,
@@ -21,6 +27,10 @@ import type {
   ControlPlaneServer,
   ControlPlaneStepEventRecord,
   ControlPlaneStore,
+  ControlPlaneTestCaseRecord,
+  ControlPlaneTestCaseVersionRecord,
+  ControlPlaneUpdateDatasetRowInput,
+  ControlPlaneUpdateTestCaseInput,
   JobEventsResponse,
   RunnerResultEnvelope,
   StepOverrideRequest,
@@ -30,6 +40,7 @@ import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js'
 import { PaginationError, parseLimit } from './pagination.js';
 import { createArtifactBlobStoreFromEnv, type ArtifactDownloadMode } from './artifact-blob-store.js';
 import { readBearerToken, verifyControlPlaneJwt } from './auth.js';
+import { ControlPlaneRequestError } from './test-assets.js';
 
 const json = (response: ServerResponse, status: number, payload?: unknown): void => {
   if (payload === undefined) {
@@ -84,13 +95,20 @@ const isInlineWebRunSelection = (value: unknown): value is Record<string, unknow
   && isObject(value.plan)
   && isObject(value.envProfile ?? value.env_profile);
 
+const isCaseVersionRunSelection = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && value.kind === 'case_version'
+  && isString(value.testCaseVersionId ?? value.test_case_version_id)
+  && ((value.datasetRowId === undefined && value.dataset_row_id === undefined)
+    || isString(value.datasetRowId ?? value.dataset_row_id));
+
 const isRunCreateRequest = (value: unknown): value is Record<string, unknown> =>
   isObject(value)
   && isString(value.tenant_id)
   && isString(value.project_id)
   && isString(value.name)
   && isRunMode(value.mode)
-  && isInlineWebRunSelection(value.selection)
+  && (isInlineWebRunSelection(value.selection) || isCaseVersionRunSelection(value.selection))
   && ((value.execution_policy === undefined)
     || isObject(value.execution_policy));
 
@@ -154,17 +172,13 @@ const normalizeEnqueueWebRun = (value: Record<string, unknown>): ControlPlaneEnq
   correlationId: typeof value.correlationId === 'string' ? value.correlationId : typeof value.correlation_id === 'string' ? value.correlation_id : undefined,
 });
 
-const normalizeRunCreateRequest = (value: Record<string, unknown>): ControlPlaneEnqueueWebRunInput => {
-  const selection = value.selection as Record<string, unknown>;
+const normalizeRunExecutionPolicy = (value: Record<string, unknown>) => {
   const executionPolicy = isObject(value.execution_policy) ? value.execution_policy : {};
-
   return {
     tenantId: String(value.tenant_id),
     projectId: String(value.project_id),
     name: String(value.name),
     mode: String(value.mode),
-    plan: selection.plan as ControlPlaneEnqueueWebRunInput['plan'],
-    envProfile: (selection.envProfile ?? selection.env_profile) as ControlPlaneEnqueueWebRunInput['envProfile'],
     requiredCapabilities: isStringArray(executionPolicy.requiredCapabilities ?? executionPolicy.required_capabilities)
       ? [...(executionPolicy.requiredCapabilities ?? executionPolicy.required_capabilities) as string[]]
       : undefined,
@@ -183,6 +197,104 @@ const normalizeRunCreateRequest = (value: Record<string, unknown>): ControlPlane
         : undefined,
   };
 };
+
+const isBoolean = (value: unknown): value is boolean => typeof value === 'boolean';
+
+const isDatasetPayload = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && ((value.name === undefined) || isString(value.name))
+  && ((value.values === undefined) || isObject(value.values));
+
+const isTestCaseCreateRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && isString(value.tenant_id)
+  && isString(value.project_id)
+  && isString(value.name)
+  && isObject(value.plan)
+  && isObject(value.env_profile)
+  && ((value.version_label === undefined) || isString(value.version_label))
+  && ((value.change_summary === undefined) || isString(value.change_summary))
+  && ((value.publish === undefined) || isBoolean(value.publish))
+  && ((value.default_dataset === undefined) || isDatasetPayload(value.default_dataset));
+
+const isTestCasePatchRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && ((value.name === undefined) || isString(value.name))
+  && ((value.status === undefined) || ['draft', 'active', 'archived'].includes(String(value.status)));
+
+const isTestCaseVersionCreateRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && isObject(value.plan)
+  && isObject(value.env_profile)
+  && ((value.version_label === undefined) || isString(value.version_label))
+  && ((value.change_summary === undefined) || isString(value.change_summary))
+  && ((value.publish === undefined) || isBoolean(value.publish))
+  && ((value.default_dataset === undefined) || isDatasetPayload(value.default_dataset));
+
+const isDatasetRowCreateRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && isObject(value.values)
+  && ((value.name === undefined) || isString(value.name));
+
+const isDatasetRowPatchRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && ((value.values === undefined) || isObject(value.values))
+  && ((value.name === undefined) || isString(value.name));
+
+const isBindDefaultDatasetRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value) && isString(value.datasetRowId ?? value.dataset_row_id);
+
+const normalizeTestCaseCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateTestCaseInput => ({
+  tenantId: String(value.tenant_id),
+  projectId: String(value.project_id),
+  name: String(value.name),
+  plan: value.plan as ControlPlaneCreateTestCaseInput['plan'],
+  envProfile: value.env_profile as ControlPlaneCreateTestCaseInput['envProfile'],
+  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
+  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
+  publish: isBoolean(value.publish) ? value.publish : undefined,
+  defaultDataset: isDatasetPayload(value.default_dataset)
+    ? {
+      name: typeof value.default_dataset.name === 'string' ? value.default_dataset.name : undefined,
+      values: isObject(value.default_dataset.values)
+        ? value.default_dataset.values
+        : undefined,
+    }
+    : undefined,
+});
+
+const normalizeTestCasePatchRequest = (value: Record<string, unknown>): ControlPlaneUpdateTestCaseInput => ({
+  name: typeof value.name === 'string' ? value.name : undefined,
+  status: typeof value.status === 'string'
+    ? value.status as ControlPlaneUpdateTestCaseInput['status']
+    : undefined,
+});
+
+const normalizeTestCaseVersionCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateTestCaseVersionInput => ({
+  plan: value.plan as ControlPlaneCreateTestCaseVersionInput['plan'],
+  envProfile: value.env_profile as ControlPlaneCreateTestCaseVersionInput['envProfile'],
+  versionLabel: typeof value.version_label === 'string' ? value.version_label : undefined,
+  changeSummary: typeof value.change_summary === 'string' ? value.change_summary : undefined,
+  publish: isBoolean(value.publish) ? value.publish : undefined,
+  defaultDataset: isDatasetPayload(value.default_dataset)
+    ? {
+      name: typeof value.default_dataset.name === 'string' ? value.default_dataset.name : undefined,
+      values: isObject(value.default_dataset.values)
+        ? value.default_dataset.values
+        : undefined,
+    }
+    : undefined,
+});
+
+const normalizeDatasetRowCreateRequest = (value: Record<string, unknown>): ControlPlaneCreateDatasetRowInput => ({
+  name: typeof value.name === 'string' ? value.name : undefined,
+  values: value.values as Record<string, unknown>,
+});
+
+const normalizeDatasetRowPatchRequest = (value: Record<string, unknown>): ControlPlaneUpdateDatasetRowInput => ({
+  name: typeof value.name === 'string' ? value.name : undefined,
+  values: isObject(value.values) ? value.values : undefined,
+});
 
 const normalizeRegisterAgent = (value: Record<string, unknown>): ControlPlaneRegisterAgentInput => ({
   agentId: String(value.agentId ?? value.agent_id),
@@ -259,6 +371,7 @@ const toApiRun = (run: ControlPlaneRunRecord) => ({
     started_at: run.startedAt,
     finished_at: run.finishedAt,
     mode: run.mode ?? undefined,
+    selection_kind: run.selectionKind ?? undefined,
   },
 });
 
@@ -291,6 +404,12 @@ const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
     job_id: runItem.jobId,
     job_kind: runItem.jobKind ?? undefined,
     required_capabilities: runItem.requiredCapabilities ?? undefined,
+    test_case_id: runItem.testCaseId ?? undefined,
+    test_case_version_id: runItem.testCaseVersionId ?? undefined,
+    data_template_version_id: runItem.dataTemplateVersionId ?? undefined,
+    dataset_row_id: runItem.datasetRowId ?? undefined,
+    input_snapshot: runItem.inputSnapshot ?? undefined,
+    source_recording_id: runItem.sourceRecordingId ?? undefined,
     assigned_agent_id: runItem.assignedAgentId ?? undefined,
     lease_token: runItem.leaseToken ?? undefined,
     control_state: runItem.controlState ?? undefined,
@@ -359,6 +478,92 @@ const toApiPrincipal = (principal: ControlPlanePrincipal) => ({
   tenant_id: principal.tenantId,
   project_ids: principal.projectIds,
   roles: principal.roles,
+});
+
+const toApiTestCase = (testCase: ControlPlaneTestCaseRecord) => ({
+  id: testCase.testCaseId,
+  tenant_id: testCase.tenantId,
+  project_id: testCase.projectId,
+  data_template_id: testCase.dataTemplateId,
+  name: testCase.name,
+  status: testCase.status,
+  latest_version_id: testCase.latestVersionId,
+  latest_published_version_id: testCase.latestPublishedVersionId,
+  created_by: testCase.createdBy,
+  updated_by: testCase.updatedBy,
+  created_at: testCase.createdAt,
+  updated_at: testCase.updatedAt,
+});
+
+const toApiTestCaseVersion = (version: ControlPlaneTestCaseVersionRecord) => ({
+  id: version.testCaseVersionId,
+  test_case_id: version.testCaseId,
+  tenant_id: version.tenantId,
+  project_id: version.projectId,
+  version_no: version.versionNo,
+  version_label: version.versionLabel,
+  status: version.status,
+  plan: version.plan,
+  env_profile: version.envProfile,
+  data_template_id: version.dataTemplateId,
+  data_template_version_id: version.dataTemplateVersionId,
+  default_dataset_row_id: version.defaultDatasetRowId,
+  source_recording_id: version.sourceRecordingId,
+  source_run_id: version.sourceRunId,
+  derived_from_case_version_id: version.derivedFromCaseVersionId,
+  change_summary: version.changeSummary,
+  created_by: version.createdBy,
+  created_at: version.createdAt,
+});
+
+const toApiTemplateSchema = (schema: ControlPlaneDataTemplateVersionRecord['schema']) => ({
+  fields: schema.fields.map((field) => ({
+    key: field.key,
+    source_type: field.sourceType,
+    value_type: field.valueType,
+    required: field.required,
+  })),
+});
+
+const toApiDataTemplateVersion = (template: ControlPlaneDataTemplateVersionRecord) => ({
+  data_template_id: template.dataTemplateId,
+  data_template_version_id: template.dataTemplateVersionId,
+  test_case_id: template.testCaseId,
+  tenant_id: template.tenantId,
+  project_id: template.projectId,
+  version_no: template.versionNo,
+  schema: toApiTemplateSchema(template.schema),
+  validation_rules: template.validationRules,
+  default_dataset_row_id: template.defaultDatasetRowId,
+  created_by: template.createdBy,
+  created_at: template.createdAt,
+});
+
+const toApiDatasetRow = (datasetRow: ControlPlaneDatasetRowRecord) => ({
+  id: datasetRow.datasetRowId,
+  test_case_id: datasetRow.testCaseId,
+  data_template_version_id: datasetRow.dataTemplateVersionId,
+  tenant_id: datasetRow.tenantId,
+  project_id: datasetRow.projectId,
+  name: datasetRow.name,
+  status: datasetRow.status,
+  values: datasetRow.values,
+  created_by: datasetRow.createdBy,
+  updated_by: datasetRow.updatedBy,
+  created_at: datasetRow.createdAt,
+  updated_at: datasetRow.updatedAt,
+});
+
+const toApiTestCaseBundle = (
+  testCase: ControlPlaneTestCaseRecord,
+  version: ControlPlaneTestCaseVersionRecord,
+  dataTemplateVersion: ControlPlaneDataTemplateVersionRecord,
+  defaultDatasetRow: ControlPlaneDatasetRowRecord,
+) => ({
+  test_case: toApiTestCase(testCase),
+  version: toApiTestCaseVersion(version),
+  data_template: toApiDataTemplateVersion(dataTemplateVersion),
+  default_dataset_row: toApiDatasetRow(defaultDatasetRow),
 });
 
 const toApiLease = (lease: ControlPlaneJobLeaseRecord) => ({
@@ -507,29 +712,29 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         return;
       }
 
-      if (method === 'POST' && pathname === '/api/v1/runs') {
+      if (method === 'POST' && pathname === '/api/v1/test-cases') {
         const principal = await authenticatePrincipal(request, response);
         if (!principal) {
           return;
         }
-        if (!store.enqueueWebRun) {
-          notSupported(response, 'create run');
+        if (!store.createTestCase) {
+          notSupported(response, 'create test case');
           return;
         }
 
         const body = await readJson<unknown>(request);
-        if (!isRunCreateRequest(body)) {
+        if (!isTestCaseCreateRequest(body)) {
           json(response, 400, {
             error: {
-              code: 'INVALID_RUN_CREATE_REQUEST',
-              message: 'tenant_id, project_id, name, mode and selection.kind=inline_web_plan with plan/env_profile are required',
+              code: 'INVALID_TEST_CASE_CREATE_REQUEST',
+              message: 'tenant_id, project_id, name, plan and env_profile are required',
               trace_id: 'local',
             },
           });
           return;
         }
 
-        const input = normalizeRunCreateRequest(body as Record<string, unknown>);
+        const input = normalizeTestCaseCreateRequest(body as Record<string, unknown>);
         if (input.tenantId !== principal.tenantId) {
           forbidden(response, 'TENANT_SCOPE_MISMATCH', 'tenant_id must match authenticated principal');
           return;
@@ -539,7 +744,542 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
 
-        const queued = await store.enqueueWebRun(input);
+        const created = await store.createTestCase(input, { subjectId: principal.subjectId });
+        json(response, 201, toApiTestCaseBundle(
+          created.testCase,
+          created.version,
+          created.dataTemplateVersion,
+          created.defaultDatasetRow,
+        ));
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/v1/test-cases') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.listTestCases) {
+          notSupported(response, 'list test cases');
+          return;
+        }
+
+        const tenantId = requiredQuery(url, 'tenant_id');
+        const projectId = requiredQuery(url, 'project_id');
+        if (tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'project_id is not granted to the principal');
+          return;
+        }
+
+        const page = await store.listTestCases({
+          tenantId,
+          projectId,
+          limit: parseLimit(url.searchParams.get('limit'), 50, 200),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiTestCase));
+        return;
+      }
+
+      const testCaseMatch = matchPath(pathname, /^\/api\/v1\/test-cases\/([^/]+)$/);
+      if ((method === 'GET' || method === 'PATCH' || method === 'DELETE') && testCaseMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCase) {
+          notSupported(response, 'get test case');
+          return;
+        }
+
+        const [, testCaseId] = testCaseMatch;
+        const testCase = await store.getTestCase(testCaseId);
+        if (!testCase) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case not found', trace_id: 'local' } });
+          return;
+        }
+        if (testCase.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, testCase.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case project_id is not granted to the principal');
+          return;
+        }
+
+        if (method === 'GET') {
+          json(response, 200, toApiTestCase(testCase));
+          return;
+        }
+
+        if (method === 'PATCH') {
+          if (!store.updateTestCase) {
+            notSupported(response, 'update test case');
+            return;
+          }
+
+          const body = await readJson<unknown>(request);
+          if (!isTestCasePatchRequest(body)) {
+            json(response, 400, {
+              error: {
+                code: 'INVALID_TEST_CASE_PATCH_REQUEST',
+                message: 'name and status must be valid when provided',
+                trace_id: 'local',
+              },
+            });
+            return;
+          }
+
+          const updated = await store.updateTestCase(
+            testCaseId,
+            normalizeTestCasePatchRequest(body as Record<string, unknown>),
+            { subjectId: principal.subjectId },
+          );
+          if (!updated) {
+            json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case not found', trace_id: 'local' } });
+            return;
+          }
+          json(response, 200, toApiTestCase(updated));
+          return;
+        }
+
+        if (!store.archiveTestCase) {
+          notSupported(response, 'archive test case');
+          return;
+        }
+        const archived = await store.archiveTestCase(testCaseId, { subjectId: principal.subjectId });
+        if (!archived) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiTestCase(archived));
+        return;
+      }
+
+      const testCaseVersionsMatch = matchPath(pathname, /^\/api\/v1\/test-cases\/([^/]+)\/versions$/);
+      if ((method === 'GET' || method === 'POST') && testCaseVersionsMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCase) {
+          notSupported(response, 'get test case');
+          return;
+        }
+
+        const [, testCaseId] = testCaseVersionsMatch;
+        const testCase = await store.getTestCase(testCaseId);
+        if (!testCase) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case not found', trace_id: 'local' } });
+          return;
+        }
+        if (testCase.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, testCase.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case project_id is not granted to the principal');
+          return;
+        }
+
+        if (method === 'GET') {
+          if (!store.listTestCaseVersions) {
+            notSupported(response, 'list test case versions');
+            return;
+          }
+          const page = await store.listTestCaseVersions({
+            testCaseId,
+            limit: parseLimit(url.searchParams.get('limit'), 50, 200),
+            cursor: url.searchParams.get('cursor') ?? undefined,
+          });
+          json(response, 200, toPaginatedPayload(page, toApiTestCaseVersion));
+          return;
+        }
+
+        if (!store.createTestCaseVersion) {
+          notSupported(response, 'create test case version');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isTestCaseVersionCreateRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_TEST_CASE_VERSION_CREATE_REQUEST',
+              message: 'plan and env_profile are required',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const created = await store.createTestCaseVersion(
+          testCaseId,
+          normalizeTestCaseVersionCreateRequest(body as Record<string, unknown>),
+          { subjectId: principal.subjectId },
+        );
+        if (!created) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 201, toApiTestCaseBundle(
+          created.testCase,
+          created.version,
+          created.dataTemplateVersion,
+          created.defaultDatasetRow,
+        ));
+        return;
+      }
+
+      const testCaseVersionMatch = matchPath(pathname, /^\/api\/v1\/test-case-versions\/([^/]+)$/);
+      if (method === 'GET' && testCaseVersionMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCaseVersion) {
+          notSupported(response, 'get test case version');
+          return;
+        }
+
+        const [, testCaseVersionId] = testCaseVersionMatch;
+        const version = await store.getTestCaseVersion(testCaseVersionId);
+        if (!version) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        if (version.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case version tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, version.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case version project_id is not granted to the principal');
+          return;
+        }
+
+        json(response, 200, toApiTestCaseVersion(version));
+        return;
+      }
+
+      const publishTestCaseVersionMatch = matchPath(pathname, /^\/api\/v1\/test-case-versions\/([^/]+):publish$/);
+      if (method === 'POST' && publishTestCaseVersionMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCaseVersion || !store.publishTestCaseVersion) {
+          notSupported(response, 'publish test case version');
+          return;
+        }
+
+        const [, testCaseVersionId] = publishTestCaseVersionMatch;
+        const existing = await store.getTestCaseVersion(testCaseVersionId);
+        if (!existing) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        if (existing.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case version tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, existing.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case version project_id is not granted to the principal');
+          return;
+        }
+
+        const version = await store.publishTestCaseVersion(testCaseVersionId, { subjectId: principal.subjectId });
+        if (!version) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiTestCaseVersion(version));
+        return;
+      }
+
+      const dataTemplateMatch = matchPath(pathname, /^\/api\/v1\/test-case-versions\/([^/]+)\/data-template$/);
+      if (method === 'GET' && dataTemplateMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCaseVersion || !store.getDataTemplateForCaseVersion) {
+          notSupported(response, 'get case version data template');
+          return;
+        }
+
+        const [, testCaseVersionId] = dataTemplateMatch;
+        const version = await store.getTestCaseVersion(testCaseVersionId);
+        if (!version) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        if (version.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case version tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, version.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case version project_id is not granted to the principal');
+          return;
+        }
+
+        const template = await store.getDataTemplateForCaseVersion(testCaseVersionId);
+        if (!template) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'data template not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiDataTemplateVersion(template));
+        return;
+      }
+
+      const datasetRowsMatch = matchPath(pathname, /^\/api\/v1\/test-case-versions\/([^/]+)\/dataset-rows$/);
+      if ((method === 'GET' || method === 'POST') && datasetRowsMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCaseVersion) {
+          notSupported(response, 'get test case version');
+          return;
+        }
+
+        const [, testCaseVersionId] = datasetRowsMatch;
+        const version = await store.getTestCaseVersion(testCaseVersionId);
+        if (!version) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        if (version.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case version tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, version.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case version project_id is not granted to the principal');
+          return;
+        }
+
+        if (method === 'GET') {
+          if (!store.listDatasetRows) {
+            notSupported(response, 'list dataset rows');
+            return;
+          }
+          const page = await store.listDatasetRows({
+            testCaseVersionId,
+            limit: parseLimit(url.searchParams.get('limit'), 50, 200),
+            cursor: url.searchParams.get('cursor') ?? undefined,
+          });
+          json(response, 200, toPaginatedPayload(page, toApiDatasetRow));
+          return;
+        }
+
+        if (!store.createDatasetRow) {
+          notSupported(response, 'create dataset row');
+          return;
+        }
+        const body = await readJson<unknown>(request);
+        if (!isDatasetRowCreateRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_DATASET_ROW_CREATE_REQUEST',
+              message: 'values is required',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const datasetRow = await store.createDatasetRow(
+          testCaseVersionId,
+          normalizeDatasetRowCreateRequest(body as Record<string, unknown>),
+          { subjectId: principal.subjectId },
+        );
+        if (!datasetRow) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 201, toApiDatasetRow(datasetRow));
+        return;
+      }
+
+      const bindDefaultDatasetMatch = matchPath(pathname, /^\/api\/v1\/test-case-versions\/([^/]+):bind-default-dataset$/);
+      if (method === 'POST' && bindDefaultDatasetMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getTestCaseVersion || !store.bindDefaultDatasetRow) {
+          notSupported(response, 'bind default dataset row');
+          return;
+        }
+
+        const [, testCaseVersionId] = bindDefaultDatasetMatch;
+        const version = await store.getTestCaseVersion(testCaseVersionId);
+        if (!version) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        if (version.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'test case version tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, version.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'test case version project_id is not granted to the principal');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isBindDefaultDatasetRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_BIND_DEFAULT_DATASET_REQUEST',
+              message: 'dataset_row_id is required',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const updated = await store.bindDefaultDatasetRow(
+          testCaseVersionId,
+          String((body as Record<string, unknown>).datasetRowId ?? (body as Record<string, unknown>).dataset_row_id),
+          { subjectId: principal.subjectId },
+        );
+        if (!updated) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'test case version not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiTestCaseVersion(updated));
+        return;
+      }
+
+      const datasetRowMatch = matchPath(pathname, /^\/api\/v1\/dataset-rows\/([^/]+)$/);
+      if ((method === 'PATCH' || method === 'DELETE') && datasetRowMatch) {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.getDatasetRow) {
+          notSupported(response, 'get dataset row');
+          return;
+        }
+
+        const [, datasetRowId] = datasetRowMatch;
+        const datasetRow = await store.getDatasetRow(datasetRowId);
+        if (!datasetRow) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'dataset row not found', trace_id: 'local' } });
+          return;
+        }
+        if (datasetRow.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'dataset row tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, datasetRow.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'dataset row project_id is not granted to the principal');
+          return;
+        }
+
+        if (method === 'PATCH') {
+          if (!store.updateDatasetRow) {
+            notSupported(response, 'update dataset row');
+            return;
+          }
+
+          const body = await readJson<unknown>(request);
+          if (!isDatasetRowPatchRequest(body)) {
+            json(response, 400, {
+              error: {
+                code: 'INVALID_DATASET_ROW_PATCH_REQUEST',
+                message: 'values and name must be valid when provided',
+                trace_id: 'local',
+              },
+            });
+            return;
+          }
+
+          const updated = await store.updateDatasetRow(
+            datasetRowId,
+            normalizeDatasetRowPatchRequest(body as Record<string, unknown>),
+            { subjectId: principal.subjectId },
+          );
+          if (!updated) {
+            json(response, 404, { error: { code: 'NOT_FOUND', message: 'dataset row not found', trace_id: 'local' } });
+            return;
+          }
+          json(response, 200, toApiDatasetRow(updated));
+          return;
+        }
+
+        if (!store.archiveDatasetRow) {
+          notSupported(response, 'archive dataset row');
+          return;
+        }
+        const archived = await store.archiveDatasetRow(datasetRowId, { subjectId: principal.subjectId });
+        if (!archived) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'dataset row not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiDatasetRow(archived));
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/v1/runs') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isRunCreateRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_RUN_CREATE_REQUEST',
+              message: 'tenant_id, project_id, name, mode and selection are required',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const payload = body as Record<string, unknown>;
+        const baseInput = normalizeRunExecutionPolicy(payload);
+        if (baseInput.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, baseInput.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'project_id is not granted to the principal');
+          return;
+        }
+
+        const selection = payload.selection as Record<string, unknown>;
+        if (selection.kind === 'case_version') {
+          if (!store.enqueueCaseVersionRun) {
+            notSupported(response, 'create case version run');
+            return;
+          }
+          const queued = await store.enqueueCaseVersionRun({
+            ...baseInput,
+            testCaseVersionId: String(selection.testCaseVersionId ?? selection.test_case_version_id),
+            datasetRowId: typeof (selection.datasetRowId ?? selection.dataset_row_id) === 'string'
+              ? String(selection.datasetRowId ?? selection.dataset_row_id)
+              : undefined,
+          });
+          json(response, 201, toApiRun(queued.run));
+          return;
+        }
+
+        if (!store.enqueueWebRun) {
+          notSupported(response, 'create run');
+          return;
+        }
+        const queued = await store.enqueueWebRun({
+          ...baseInput,
+          plan: selection.plan as ControlPlaneEnqueueWebRunInput['plan'],
+          envProfile: (selection.envProfile ?? selection.env_profile) as ControlPlaneEnqueueWebRunInput['envProfile'],
+        });
         json(response, 201, toApiRun(queued.run));
         return;
       }
@@ -1037,6 +1777,18 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         return;
       }
 
+      if (error instanceof ControlPlaneRequestError) {
+        json(response, error.status, {
+          error: {
+            code: error.code,
+            message: error.message,
+            trace_id: 'local',
+          },
+        });
+        return;
+      }
+
+      console.error(error);
       json(response, 500, {
         error: {
           code: 'INTERNAL_ERROR',

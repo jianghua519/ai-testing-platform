@@ -63,6 +63,7 @@ export interface ControlPlaneRunRecord {
   projectId: string;
   name?: string | null;
   mode?: string | null;
+  selectionKind?: string | null;
   status: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -81,6 +82,12 @@ export interface ControlPlaneRunItemRecord {
   status: string;
   jobKind?: string | null;
   requiredCapabilities?: string[] | null;
+  testCaseId?: string | null;
+  testCaseVersionId?: string | null;
+  dataTemplateVersionId?: string | null;
+  datasetRowId?: string | null;
+  inputSnapshot?: Record<string, unknown> | null;
+  sourceRecordingId?: string | null;
   assignedAgentId?: string | null;
   leaseToken?: string | null;
   controlState?: string | null;
@@ -170,6 +177,25 @@ export interface ControlPlaneListRunsQuery {
   cursor?: string;
 }
 
+export interface ControlPlaneListTestCasesQuery {
+  tenantId: string;
+  projectId: string;
+  limit: number;
+  cursor?: string;
+}
+
+export interface ControlPlaneListTestCaseVersionsQuery {
+  testCaseId: string;
+  limit: number;
+  cursor?: string;
+}
+
+export interface ControlPlaneListDatasetRowsQuery {
+  testCaseVersionId: string;
+  limit: number;
+  cursor?: string;
+}
+
 export interface ControlPlaneListRunItemsQuery {
   runId: string;
   limit: number;
@@ -209,6 +235,138 @@ export interface ControlPlanePrincipal {
   projectGrants: ControlPlanePrincipalProjectGrant[];
 }
 
+export interface ControlPlaneTemplateFieldRecord {
+  key: string;
+  sourceType: 'variable_ref' | 'file_ref' | 'loop_source_ref';
+  valueType: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'file' | 'unknown';
+  required: boolean;
+}
+
+export interface ControlPlaneTemplateSchemaRecord {
+  fields: ControlPlaneTemplateFieldRecord[];
+}
+
+export interface ControlPlaneDataTemplateVersionRecord {
+  dataTemplateId: string;
+  dataTemplateVersionId: string;
+  testCaseId: string;
+  tenantId: string;
+  projectId: string;
+  versionNo: number;
+  schema: ControlPlaneTemplateSchemaRecord;
+  validationRules: Record<string, unknown>;
+  defaultDatasetRowId?: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface ControlPlaneDatasetRowRecord {
+  datasetRowId: string;
+  testCaseId: string;
+  dataTemplateVersionId: string;
+  tenantId: string;
+  projectId: string;
+  name: string;
+  status: string;
+  values: Record<string, unknown>;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ControlPlaneTestCaseRecord {
+  testCaseId: string;
+  tenantId: string;
+  projectId: string;
+  dataTemplateId: string;
+  name: string;
+  status: string;
+  latestVersionId: string | null;
+  latestPublishedVersionId: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ControlPlaneTestCaseVersionRecord {
+  testCaseVersionId: string;
+  testCaseId: string;
+  tenantId: string;
+  projectId: string;
+  versionNo: number;
+  versionLabel: string | null;
+  status: string;
+  plan: WebStepPlanDraft;
+  envProfile: EnvProfile;
+  dataTemplateId: string;
+  dataTemplateVersionId: string;
+  defaultDatasetRowId: string | null;
+  sourceRecordingId: string | null;
+  sourceRunId: string | null;
+  derivedFromCaseVersionId: string | null;
+  changeSummary: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface ControlPlaneCreateTestCaseInput {
+  tenantId: string;
+  projectId: string;
+  name: string;
+  plan: WebStepPlanDraft;
+  envProfile: EnvProfile;
+  versionLabel?: string;
+  changeSummary?: string;
+  publish?: boolean;
+  defaultDataset?: {
+    name?: string;
+    values?: Record<string, unknown>;
+  };
+}
+
+export interface ControlPlaneCreateTestCaseResult {
+  testCase: ControlPlaneTestCaseRecord;
+  version: ControlPlaneTestCaseVersionRecord;
+  dataTemplateVersion: ControlPlaneDataTemplateVersionRecord;
+  defaultDatasetRow: ControlPlaneDatasetRowRecord;
+}
+
+export interface ControlPlaneUpdateTestCaseInput {
+  name?: string;
+  status?: 'draft' | 'active' | 'archived';
+}
+
+export interface ControlPlaneCreateTestCaseVersionInput {
+  plan: WebStepPlanDraft;
+  envProfile: EnvProfile;
+  versionLabel?: string;
+  changeSummary?: string;
+  publish?: boolean;
+  defaultDataset?: {
+    name?: string;
+    values?: Record<string, unknown>;
+  };
+}
+
+export interface ControlPlaneCreateTestCaseVersionResult {
+  testCase: ControlPlaneTestCaseRecord;
+  version: ControlPlaneTestCaseVersionRecord;
+  dataTemplateVersion: ControlPlaneDataTemplateVersionRecord;
+  defaultDatasetRow: ControlPlaneDatasetRowRecord;
+}
+
+export interface ControlPlaneCreateDatasetRowInput {
+  name?: string;
+  values: Record<string, unknown>;
+}
+
+export interface ControlPlaneUpdateDatasetRowInput {
+  name?: string;
+  values?: Record<string, unknown>;
+}
+
 export interface ControlPlaneEnqueueWebRunInput {
   tenantId: string;
   projectId: string;
@@ -226,6 +384,19 @@ export interface ControlPlaneEnqueueWebRunResult {
   run: ControlPlaneRunRecord;
   runItem: ControlPlaneRunItemRecord;
   job: WebWorkerJob;
+}
+
+export interface ControlPlaneEnqueueCaseVersionRunInput {
+  tenantId: string;
+  projectId: string;
+  name: string;
+  mode?: string;
+  testCaseVersionId: string;
+  datasetRowId?: string;
+  requiredCapabilities?: string[];
+  variableContext?: Record<string, unknown>;
+  traceId?: string;
+  correlationId?: string;
 }
 
 export interface ControlPlaneRegisterAgentInput {
@@ -271,6 +442,7 @@ export type ControlPlaneRunControlAction = 'pause' | 'resume' | 'cancel';
 
 export interface ControlPlaneSchedulingStore {
   enqueueWebRun(input: ControlPlaneEnqueueWebRunInput): Promise<ControlPlaneEnqueueWebRunResult>;
+  enqueueCaseVersionRun?(input: ControlPlaneEnqueueCaseVersionRunInput): Promise<ControlPlaneEnqueueWebRunResult>;
   registerAgent(input: ControlPlaneRegisterAgentInput): Promise<ControlPlaneAgentRecord>;
   heartbeatAgent(agentId: string, input: ControlPlaneHeartbeatAgentInput): Promise<ControlPlaneAgentRecord | undefined>;
   acquireLease(agentId: string, input: ControlPlaneAcquireLeaseInput): Promise<ControlPlaneAcquireLeaseResult | undefined>;
@@ -283,6 +455,54 @@ export interface ControlPlaneSchedulingStore {
 
 export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> {
   resolvePrincipal?(actor: ControlPlaneAuthenticatedActor): Promise<ControlPlanePrincipal>;
+  createTestCase?(
+    input: ControlPlaneCreateTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseResult>;
+  listTestCases?(query: ControlPlaneListTestCasesQuery): Promise<ControlPlanePage<ControlPlaneTestCaseRecord>>;
+  getTestCase?(testCaseId: string): Promise<ControlPlaneTestCaseRecord | undefined>;
+  updateTestCase?(
+    testCaseId: string,
+    input: ControlPlaneUpdateTestCaseInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseRecord | undefined>;
+  archiveTestCase?(
+    testCaseId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseRecord | undefined>;
+  listTestCaseVersions?(query: ControlPlaneListTestCaseVersionsQuery): Promise<ControlPlanePage<ControlPlaneTestCaseVersionRecord>>;
+  createTestCaseVersion?(
+    testCaseId: string,
+    input: ControlPlaneCreateTestCaseVersionInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneCreateTestCaseVersionResult | undefined>;
+  getTestCaseVersion?(testCaseVersionId: string): Promise<ControlPlaneTestCaseVersionRecord | undefined>;
+  publishTestCaseVersion?(
+    testCaseVersionId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseVersionRecord | undefined>;
+  getDataTemplateForCaseVersion?(testCaseVersionId: string): Promise<ControlPlaneDataTemplateVersionRecord | undefined>;
+  listDatasetRows?(query: ControlPlaneListDatasetRowsQuery): Promise<ControlPlanePage<ControlPlaneDatasetRowRecord>>;
+  getDatasetRow?(datasetRowId: string): Promise<ControlPlaneDatasetRowRecord | undefined>;
+  createDatasetRow?(
+    testCaseVersionId: string,
+    input: ControlPlaneCreateDatasetRowInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDatasetRowRecord | undefined>;
+  updateDatasetRow?(
+    datasetRowId: string,
+    input: ControlPlaneUpdateDatasetRowInput,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDatasetRowRecord | undefined>;
+  archiveDatasetRow?(
+    datasetRowId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneDatasetRowRecord | undefined>;
+  bindDefaultDatasetRow?(
+    testCaseVersionId: string,
+    datasetRowId: string,
+    actor: { subjectId: string },
+  ): Promise<ControlPlaneTestCaseVersionRecord | undefined>;
   recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult>;
   listJobEvents(jobId: string): Promise<RecordedRunnerEvent[]>;
   enqueueStepDecision(
