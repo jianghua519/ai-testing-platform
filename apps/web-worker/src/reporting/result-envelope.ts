@@ -50,15 +50,14 @@ const toPayloadStatus = (status: WebWorkerResult['status']): JobResultPayload['s
   switch (status) {
     case 'executed':
       return 'passed';
+    case 'canceled':
+      return 'canceled';
     case 'compile_failed':
     case 'execution_failed':
-      return 'failed';
     case 'compiled':
       return 'failed';
   }
 };
-
-const collectArtifacts = (planResult?: PlanExecutionResult) => planResult?.stepResults.flatMap((step) => step.artifacts) ?? [];
 
 export class DefaultResultEnvelopeFactory implements ResultEnvelopeFactory {
   buildJobResult(result: WebWorkerResult): ResultReportedEnvelope {
@@ -80,7 +79,7 @@ export class DefaultResultEnvelopeFactory implements ResultEnvelopeFactory {
         started_at: result.planResult?.startedAt,
         finished_at: result.planResult?.finishedAt,
         error: buildJobError(result),
-        artifacts: collectArtifacts(result.planResult),
+        artifacts: result.planResult?.artifacts ?? [],
         usage: result.planResult
           ? {
               duration_ms: result.planResult.durationMs,

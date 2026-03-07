@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import {
   DefaultResultEnvelopeFactory,
@@ -72,6 +73,7 @@ const buildJobResult = (metadata, compiledPlanId, stepResult, isoBase) => ({
     startedAt: `${isoBase}:00.000Z`,
     finishedAt: `${isoBase}:00.500Z`,
     durationMs: 500,
+    artifacts: [],
     stepResults: [stepResult],
   },
 });
@@ -80,9 +82,14 @@ try {
   const compiler = new DefaultDslCompiler();
   const envelopeFactory = new DefaultResultEnvelopeFactory();
   const baseFixture = createWebWorkerJobFixture();
+  const scopedFixture = {
+    ...baseFixture,
+    tenantId: randomUUID(),
+    projectId: randomUUID(),
+  };
   const compileResponse = await compiler.compile({
-    sourcePlan: baseFixture.plan,
-    envProfile: baseFixture.envProfile,
+    sourcePlan: scopedFixture.plan,
+    envProfile: scopedFixture.envProfile,
   });
 
   assertOk(Boolean(compileResponse.compiledPlan), `compile failed: ${compileResponse.issues.map((issue) => issue.message).join(', ')}`);
@@ -92,42 +99,47 @@ try {
   assertOk(Boolean(firstStep && secondStep), 'expected two compiled steps');
 
   const scenarios = [
-    cloneJob(baseFixture, {
-      jobId: '11111111-1111-1111-1111-111111111111',
-      runId: '44444444-4444-4444-4444-444444444441',
-      runItemId: '55555555-5555-5555-5555-555555555441',
+    cloneJob(scopedFixture, {
+      jobId: randomUUID(),
+      runId: randomUUID(),
+      runItemId: randomUUID(),
       traceId: 'trace-compose-1',
       correlationId: 'corr-compose-1',
     }),
-    cloneJob(baseFixture, {
-      jobId: '11111111-1111-1111-1111-111111111112',
-      runId: '44444444-4444-4444-4444-444444444441',
-      runItemId: '55555555-5555-5555-5555-555555555442',
+    cloneJob(scopedFixture, {
+      jobId: randomUUID(),
+      runId: null,
+      runItemId: randomUUID(),
       traceId: 'trace-compose-2',
       correlationId: 'corr-compose-2',
     }),
-    cloneJob(baseFixture, {
-      jobId: '11111111-1111-1111-1111-111111111113',
-      runId: '44444444-4444-4444-4444-444444444441',
-      runItemId: '55555555-5555-5555-5555-555555555443',
+    cloneJob(scopedFixture, {
+      jobId: randomUUID(),
+      runId: null,
+      runItemId: randomUUID(),
       traceId: 'trace-compose-3',
       correlationId: 'corr-compose-3',
     }),
-    cloneJob(baseFixture, {
-      jobId: '11111111-1111-1111-1111-111111111114',
-      runId: '44444444-4444-4444-4444-444444444442',
-      runItemId: '55555555-5555-5555-5555-555555555444',
+    cloneJob(scopedFixture, {
+      jobId: randomUUID(),
+      runId: randomUUID(),
+      runItemId: randomUUID(),
       traceId: 'trace-compose-4',
       correlationId: 'corr-compose-4',
     }),
-    cloneJob(baseFixture, {
-      jobId: '11111111-1111-1111-1111-111111111115',
-      runId: '44444444-4444-4444-4444-444444444443',
-      runItemId: '55555555-5555-5555-5555-555555555445',
+    cloneJob(scopedFixture, {
+      jobId: randomUUID(),
+      runId: randomUUID(),
+      runItemId: randomUUID(),
       traceId: 'trace-compose-5',
       correlationId: 'corr-compose-5',
     }),
   ];
+  scenarios[1].runId = scenarios[0].runId;
+  scenarios[2].runId = scenarios[0].runId;
+  const agentId = randomUUID();
+  const leaseToken = `lease-compose-${randomUUID()}`;
+  const artifactId = randomUUID();
 
   const overrideResponse = await postJson(
     `${baseUrl}/api/v1/internal/jobs/${scenarios[0].jobId}/steps/${secondStep.sourceStepId}:override`,
@@ -207,9 +219,9 @@ try {
      ) values ($1, $2, $3, $4, $5, $6, $7, $8, '["web","api"]'::jsonb, '{"source":"compose-smoke"}'::jsonb, now())
      on conflict (agent_id) do nothing`,
     [
-      '66666666-6666-6666-6666-666666666661',
-      baseFixture.tenantId,
-      baseFixture.projectId,
+      agentId,
+      scopedFixture.tenantId,
+      scopedFixture.projectId,
       'compose-agent-1',
       'linux',
       'amd64',
@@ -227,8 +239,8 @@ try {
       scenarios[0].jobId,
       scenarios[0].runId,
       scenarios[0].runItemId,
-      '66666666-6666-6666-6666-666666666661',
-      'lease-compose-1',
+      agentId,
+      leaseToken,
       scenarios[0].attemptNo,
       'leased',
     ],
@@ -251,7 +263,7 @@ try {
      ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{"source":"compose-smoke"}'::jsonb)
      on conflict (artifact_id) do nothing`,
     [
-      '77777777-7777-7777-7777-777777777771',
+      artifactId,
       scenarios[0].tenantId,
       scenarios[0].projectId,
       scenarios[0].runId,
@@ -328,7 +340,7 @@ try {
   assertOk(decisionResponse.status === 200 && decisionResponse.body.action === 'replace', 'step decision did not return replace');
   assertOk(firstPost.status === 202, `first step post expected 202, got ${firstPost.status}`);
   assertOk(duplicatePost.status === 200 && duplicatePost.body?.duplicate === true, 'duplicate event was not deduplicated');
-  assertOk(migrationsPage.body.items.length === 4, `expected 4 migrations, got ${migrationsPage.body.items.length}`);
+  assertOk(migrationsPage.body.items.length === 5, `expected 5 migrations, got ${migrationsPage.body.items.length}`);
   assertOk(runsPage1.body.items.length === 2 && runsPage1.body.next_cursor, 'runs page 1 pagination failed');
   assertOk(runsPage2.body.items.length === 1, 'runs page 2 expected 1 item');
   assertOk(runItemPage1.body.items.length === 2 && runItemPage1.body.next_cursor, 'run items page 1 pagination failed');

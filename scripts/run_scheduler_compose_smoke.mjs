@@ -1,19 +1,23 @@
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { Pool } from 'pg';
 import { DefaultDslCompiler } from '../packages/dsl-compiler/dist/index.js';
 import { RegistryBasedPlaywrightAdapter } from '../packages/playwright-adapter/dist/index.js';
 import {
   HttpAgentControlPlaneClient,
+  HttpStepController,
   HttpResultPublisher,
   PollingWebAgent,
   PlaywrightBrowserLauncher,
   WebJobRunner,
   createWebWorkerJobFixture,
 } from '../apps/web-worker/dist/index.js';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const baseUrl = process.env.CONTROL_PLANE_BASE_URL ?? 'http://control-plane:8080';
 const connectionString = process.env.CONTROL_PLANE_DATABASE_URL;
@@ -23,7 +27,7 @@ if (!connectionString) {
 
 const pool = new Pool({ connectionString });
 
-const postJson = async (pathname, payload) => {
+const postJson = async (pathname, payload = {}) => {
   const response = await fetch(new URL(pathname, baseUrl), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -49,6 +53,27 @@ const assertOk = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
+};
+
+const waitFor = async (fn, { timeoutMs = 20000, intervalMs = 100, label = 'condition' } = {}) => {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const value = await fn();
+      if (value) {
+        return value;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(intervalMs);
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error(`timed out waiting for ${label}`);
 };
 
 const readRequestBody = (request) =>
@@ -201,6 +226,15 @@ const createInteractivePlan = (targetBaseUrl, uploadFilePath, displayName) => ({
       height: 900,
     },
   },
+  defaults: {
+    artifactPolicy: {
+      screenshot: 'always',
+      trace: 'always',
+      video: 'always',
+      domSnapshot: false,
+      networkCapture: false,
+    },
+  },
   steps: [
     {
       stepId: 'open-home',
@@ -240,6 +274,13 @@ const createInteractivePlan = (targetBaseUrl, uploadFilePath, displayName) => ({
           },
         },
       ],
+    },
+    {
+      stepId: 'wait-control-window',
+      name: '等待控制窗口',
+      kind: 'control',
+      action: 'wait',
+      timeoutMs: 3000,
     },
     {
       stepId: 'input-display-name',
@@ -330,7 +371,7 @@ const createInteractivePlan = (targetBaseUrl, uploadFilePath, displayName) => ({
   ],
 });
 
-const createAgent = (client, runner, fixture, descriptorOverrides) => new PollingWebAgent(client, runner, {
+const createAgent = (client, runner, fixture, descriptorOverrides = {}, optionOverrides = {}) => new PollingWebAgent(client, runner, {
   tenantId: fixture.tenantId,
   projectId: fixture.projectId,
   platform: 'linux',
@@ -342,11 +383,19 @@ const createAgent = (client, runner, fixture, descriptorOverrides) => new Pollin
   supportedJobKinds: ['web'],
   leaseTtlSeconds: 30,
   leaseHeartbeatIntervalMs: 250,
+  maxParallelSlots: descriptorOverrides.maxParallelSlots ?? 1,
+  ...optionOverrides,
 });
+
+const collectStepIds = (eventsPayload) =>
+  eventsPayload.items
+    .filter((item) => item.envelope.event_type === 'step.result_reported')
+    .map((item) => `${item.envelope.payload.source_step_id}:${item.envelope.payload.status}`);
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aiwtp-scheduler-real-'));
 const uploadFilePath = path.join(tempDir, 'avatar-smoke.txt');
 await writeFile(uploadFilePath, 'avatar smoke payload\n', 'utf8');
+process.env.WEB_WORKER_ARTIFACT_ROOT = path.join(tempDir, 'artifacts');
 const targetServer = await startTargetServer();
 
 try {
@@ -357,10 +406,16 @@ try {
     new RegistryBasedPlaywrightAdapter(),
     new HttpResultPublisher({ endpoint: `${baseUrl}/api/v1/internal/runner-results`, timeoutMs: 5000 }),
     new PlaywrightBrowserLauncher(),
+    {
+      create: (metadata) => new HttpStepController(metadata, {
+        endpoint: `${baseUrl}/api/v1/agent/jobs/{job_id}/steps/{source_step_id}:decide`,
+        timeoutMs: 5000,
+      }),
+    },
   );
 
-  const enqueueResponses = await Promise.all([
-    postJson('/api/v1/internal/runs:enqueue-web', {
+  const enqueuePayloads = [
+    {
       tenant_id: fixture.tenantId,
       project_id: fixture.projectId,
       name: '调度浏览器链路用例一',
@@ -375,8 +430,8 @@ try {
         },
       },
       variable_context: { case: 'one' },
-    }),
-    postJson('/api/v1/internal/runs:enqueue-web', {
+    },
+    {
       tenant_id: fixture.tenantId,
       project_id: fixture.projectId,
       name: '调度浏览器链路用例二',
@@ -391,9 +446,26 @@ try {
         },
       },
       variable_context: { case: 'two' },
-    }),
-  ]);
+    },
+    {
+      tenant_id: fixture.tenantId,
+      project_id: fixture.projectId,
+      name: '调度浏览器链路用例三-取消',
+      mode: 'standard',
+      plan: createInteractivePlan(targetServer.baseUrl, uploadFilePath, 'Smoke User Three'),
+      env_profile: {
+        ...fixture.envProfile,
+        browserProfile: {
+          ...fixture.envProfile.browserProfile,
+          browser: 'chromium',
+          headless: true,
+        },
+      },
+      variable_context: { case: 'three' },
+    },
+  ];
 
+  const enqueueResponses = await Promise.all(enqueuePayloads.map((payload) => postJson('/api/v1/internal/runs:enqueue-web', payload)));
   enqueueResponses.forEach((response, index) => {
     assertOk(response.status === 201, `enqueue ${index} expected 201, got ${response.status}`);
   });
@@ -402,42 +474,117 @@ try {
     agentId: '88888888-8888-8888-8888-888888888880',
     name: 'scheduler-compose-firefox-agent',
     capabilities: ['web', 'browser:firefox'],
+    maxParallelSlots: 1,
   });
   const chromiumAgent = createAgent(agentClient, runner, fixture, {
     agentId: '88888888-8888-8888-8888-888888888881',
     name: 'scheduler-compose-chromium-agent',
     capabilities: ['web', 'browser:chromium'],
+    maxParallelSlots: 2,
+  }, {
+    maxParallelSlots: 2,
   });
 
   const firefoxCycle = await firefoxAgent.runOnce();
-  const cycleResults = await chromiumAgent.runUntilIdle(1);
+  const chromiumRunPromise = chromiumAgent.runUntilIdle(1);
+
+  const queuedRunIds = enqueueResponses.map((response) => response.body.run.id);
+  const queuedJobIds = enqueueResponses.map((response) => response.body.job.jobId);
+  const queuedRunItemIds = enqueueResponses.map((response) => response.body.run_item.id);
+
+  const observedActiveLeases = await waitFor(async () => {
+    const result = await pool.query(
+      `select count(*)::int as active_count
+       from job_leases
+       where job_id = any($1::text[])
+         and released_at is null`,
+      [queuedJobIds],
+    );
+    return result.rows[0]?.active_count >= 2 ? result.rows[0].active_count : false;
+  }, { timeoutMs: 60000, label: 'two active leases' });
+
+  const runOneJobId = enqueueResponses[0].body.job.jobId;
+  const runOneRunId = enqueueResponses[0].body.run.id;
+  const runOneRunItemId = enqueueResponses[0].body.run_item.id;
+  const runThreeJobId = enqueueResponses[2].body.job.jobId;
+  const runThreeRunId = enqueueResponses[2].body.run.id;
+
+  await waitFor(async () => {
+    const payload = await getJson(`/api/v1/internal/jobs/${runOneJobId}/events`);
+    return collectStepIds(payload.body).some((value) => value === 'assert-profile-form-visible:passed') ? payload.body : false;
+  }, { timeoutMs: 60000, label: 'run one profile assertion step event' });
+
+  const pauseResponse = await postJson(`/api/v1/internal/runs/${runOneRunId}:pause`);
+  const pausedRunItemState = await waitFor(async () => {
+    const result = await pool.query('select control_state from run_items where run_item_id = $1', [runOneRunItemId]);
+    return result.rows[0]?.control_state === 'paused' ? result.rows[0].control_state : false;
+  }, { timeoutMs: 60000, label: 'run one paused state' });
+  await sleep(500);
+  const resumeResponse = await postJson(`/api/v1/internal/runs/${runOneRunId}:resume`);
+  const resumedRunItemState = await waitFor(async () => {
+    const result = await pool.query('select control_state from run_items where run_item_id = $1', [runOneRunItemId]);
+    return result.rows[0]?.control_state === 'active' ? result.rows[0].control_state : false;
+  }, { timeoutMs: 60000, label: 'run one resumed state' });
+
+  await waitFor(async () => {
+    const payload = await getJson(`/api/v1/internal/jobs/${runThreeJobId}/events`);
+    return collectStepIds(payload.body).some((value) => value === 'assert-profile-form-visible:passed') ? payload.body : false;
+  }, { timeoutMs: 60000, label: 'run three profile assertion step event' });
+
+  const cancelResponse = await postJson(`/api/v1/runs/${runThreeRunId}:cancel`);
+
+  const cycleResults = await chromiumRunPromise;
   const executedCycles = cycleResults.filter((cycle) => cycle.status === 'executed');
   const idleCycles = cycleResults.filter((cycle) => cycle.status === 'idle');
 
-  const [health, runsPage, runItemsPage] = await Promise.all([
+  const [health, runsPage, firstRunItemsPage] = await Promise.all([
     getJson('/healthz'),
-    getJson(`/api/v1/runs?tenant_id=${fixture.tenantId}&project_id=${fixture.projectId}&limit=10`),
-    getJson(`/api/v1/run-items?run_id=${enqueueResponses[0].body.run.id}&limit=10`),
+    getJson(`/api/v1/runs?tenant_id=${fixture.tenantId}&project_id=${fixture.projectId}&limit=20`),
+    getJson(`/api/v1/run-items?run_id=${enqueueResponses[0].body.run.id}&limit=20`),
   ]);
   const stepEventsByRun = await Promise.all(
-    enqueueResponses.map((response) => getJson(`/api/v1/internal/runs/${response.body.run.id}/step-events?limit=20`)),
+    enqueueResponses.map((response) => getJson(`/api/v1/internal/runs/${response.body.run.id}/step-events?limit=50`)),
+  );
+  const artifactsByRunItem = await Promise.all(
+    enqueueResponses.map((response) => getJson(`/api/v1/internal/run-items/${response.body.run_item.id}/artifacts?limit=100`)),
   );
   const jobEventsByJob = await Promise.all(
     enqueueResponses.map((response) => getJson(`/api/v1/internal/jobs/${response.body.job.jobId}/events`)),
   );
-  const queuedRunIds = enqueueResponses.map((response) => response.body.run.id);
-  const queuedJobIds = enqueueResponses.map((response) => response.body.job.jobId);
-  const queuedRunItemIds = enqueueResponses.map((response) => response.body.run_item.id);
+
   const schedulerAgentIds = [
     '88888888-8888-8888-8888-888888888880',
     '88888888-8888-8888-8888-888888888881',
   ];
-
   const [agentRows, leaseRows, runRows, runItemRows] = await Promise.all([
-    pool.query(`select agent_id, status, capabilities_json, last_heartbeat_at from agents where agent_id = any($1::text[]) order by agent_id asc`, [schedulerAgentIds]),
-    pool.query(`select lease_token, status, released_at, heartbeat_at from job_leases where job_id = any($1::text[]) order by lease_id asc`, [queuedJobIds]),
-    pool.query(`select run_id, status from runs where run_id = any($1::text[]) order by created_at asc, run_id asc`, [queuedRunIds]),
-    pool.query(`select run_item_id, status, required_capabilities_json, assigned_agent_id, lease_token from run_items where run_item_id = any($1::text[]) order by created_at asc, run_item_id asc`, [queuedRunItemIds]),
+    pool.query(
+      `select agent_id, status, capabilities_json, max_parallel_slots, last_heartbeat_at
+       from agents
+       where agent_id = any($1::text[])
+       order by agent_id asc`,
+      [schedulerAgentIds],
+    ),
+    pool.query(
+      `select lease_token, status, released_at, heartbeat_at
+       from job_leases
+       where job_id = any($1::text[])
+       order by lease_id asc`,
+      [queuedJobIds],
+    ),
+    pool.query(
+      `select run_id, status
+       from runs
+       where run_id = any($1::text[])
+       order by created_at asc, run_id asc`,
+      [queuedRunIds],
+    ),
+    pool.query(
+      `select run_item_id, status, required_capabilities_json, assigned_agent_id, lease_token, control_state
+       from run_items
+       where run_item_id = any($1::text[])
+       order by created_at asc, run_item_id asc`,
+      [queuedRunItemIds],
+    ),
   ]);
 
   const interactionHits = targetServer.hits.filter((item) =>
@@ -445,44 +592,96 @@ try {
   );
   const hitPaths = interactionHits.map((item) => item.path);
 
+  const artifactTypeSets = artifactsByRunItem.map((response) => new Set(response.body.items.map((item) => item.artifact_type)));
+  const artifactSamples = [];
+  for (const response of artifactsByRunItem) {
+    for (const artifact of response.body.items) {
+      if (['screenshot', 'trace', 'video'].includes(artifact.artifact_type)) {
+        const filePath = fileURLToPath(artifact.storage_uri);
+        const fileStats = await stat(filePath);
+        artifactSamples.push({
+          artifactType: artifact.artifact_type,
+          storageUri: artifact.storage_uri,
+          sizeBytes: fileStats.size,
+        });
+      }
+      if (artifactSamples.length >= 3) {
+        break;
+      }
+    }
+    if (artifactSamples.length >= 3) {
+      break;
+    }
+  }
+
+  const runStatuses = new Map(runRows.rows.map((row) => [row.run_id, row.status]));
+  const runItemStatuses = new Map(runItemRows.rows.map((row) => [row.run_item_id, row.status]));
+
   assertOk(health.status === 200 && health.body.status === 'ok', 'healthz failed');
   assertOk(firefoxCycle.status === 'idle', `expected firefox agent to stay idle, got ${firefoxCycle.status}`);
-  assertOk(executedCycles.length === 2, `expected 2 executed cycles, got ${executedCycles.length}`);
+  assertOk(observedActiveLeases === 2, `expected to observe 2 active leases, got ${observedActiveLeases}`);
+  assertOk(pauseResponse.status === 202, `expected pause response 202, got ${pauseResponse.status}`);
+  assertOk(pausedRunItemState === 'paused', `expected paused control state, got ${pausedRunItemState}`);
+  assertOk(resumeResponse.status === 202, `expected resume response 202, got ${resumeResponse.status}`);
+  assertOk(resumedRunItemState === 'active', `expected resumed control state, got ${resumedRunItemState}`);
+  assertOk(cancelResponse.status === 202, `expected cancel response 202, got ${cancelResponse.status}`);
+  assertOk(executedCycles.length === 3, `expected 3 executed cycles, got ${executedCycles.length}`);
   assertOk(idleCycles.length === 1, `expected 1 idle cycle, got ${idleCycles.length}`);
-  assertOk(hitPaths.filter((value) => value === '/home').length === 2, `expected 2 /home hits, got ${hitPaths}`);
-  assertOk(hitPaths.filter((value) => value === '/profile-form').length === 2, `expected 2 /profile-form hits, got ${hitPaths}`);
+  assertOk(hitPaths.filter((value) => value === '/home').length === 3, `expected 3 /home hits, got ${hitPaths}`);
+  assertOk(hitPaths.filter((value) => value === '/profile-form').length === 3, `expected 3 /profile-form hits, got ${hitPaths}`);
   assertOk(hitPaths.filter((value) => value === '/submit').length === 2, `expected 2 /submit hits, got ${hitPaths}`);
   assertOk(interactionHits[0]?.userAgent?.includes('HeadlessChrome') || interactionHits[0]?.userAgent?.includes('Chrome'), 'expected chromium user agent evidence');
   assertOk(targetServer.submissions.length === 2, `expected 2 submissions, got ${targetServer.submissions.length}`);
   assertOk(targetServer.submissions.every((payload) => payload.fileName === 'avatar-smoke.txt'), 'expected uploaded file names to match');
-  assertOk(targetServer.submissions.some((payload) => payload.displayName === 'Smoke User One'), 'missing submission for Smoke User One');
-  assertOk(targetServer.submissions.some((payload) => payload.displayName === 'Smoke User Two'), 'missing submission for Smoke User Two');
-  assertOk(runsPage.body.items.length >= 2, 'expected at least 2 runs in list response');
-  assertOk(runItemsPage.body.items.length === 1, `expected 1 run item for first run, got ${runItemsPage.body.items.length}`);
-  assertOk(stepEventsByRun.every((response) => response.body.items.length === 7), 'expected 7 step events for each run');
-  assertOk(jobEventsByJob.every((response) => response.body.items.length === 8), 'expected 8 job events for each queued job');
+  assertOk(runStatuses.get(queuedRunIds[0]) === 'passed', 'expected run one to pass');
+  assertOk(runStatuses.get(queuedRunIds[1]) === 'passed', 'expected run two to pass');
+  assertOk(runStatuses.get(queuedRunIds[2]) === 'canceled', 'expected run three to cancel');
+  assertOk(runItemStatuses.get(queuedRunItemIds[0]) === 'passed', 'expected run item one to pass');
+  assertOk(runItemStatuses.get(queuedRunItemIds[1]) === 'passed', 'expected run item two to pass');
+  assertOk(runItemStatuses.get(queuedRunItemIds[2]) === 'canceled', 'expected run item three to cancel');
+  assertOk(firstRunItemsPage.body.items.length === 1, `expected 1 run item for first run, got ${firstRunItemsPage.body.items.length}`);
+  assertOk(stepEventsByRun[0].body.items.length === 8, `expected run one to emit 8 step events, got ${stepEventsByRun[0].body.items.length}`);
+  assertOk(stepEventsByRun[1].body.items.length === 8, `expected run two to emit 8 step events, got ${stepEventsByRun[1].body.items.length}`);
+  assertOk(stepEventsByRun[2].body.items.some((item) => item.status === 'canceled'), 'expected run three to contain a canceled step');
+  assertOk(jobEventsByJob.every((response) => response.body.items.length === 9), 'expected each job to emit 8 step events plus 1 job event');
   assertOk(agentRows.rows.length === 2, `expected 2 scheduler agents, got ${agentRows.rows.length}`);
-  assertOk(agentRows.rows.some((row) => row.agent_id === '88888888-8888-8888-8888-888888888880'), 'expected firefox agent row');
-  assertOk(agentRows.rows.some((row) => row.agent_id === '88888888-8888-8888-8888-888888888881'), 'expected chromium agent row');
-  assertOk(leaseRows.rows.length === 2, `expected 2 lease rows, got ${leaseRows.rows.length}`);
-  assertOk(leaseRows.rows.every((row) => row.status === 'completed' && row.released_at), 'expected completed released leases');
-  assertOk(runRows.rows.every((row) => row.status === 'passed'), 'expected all runs to be passed');
-  assertOk(runItemRows.rows.every((row) => row.status === 'passed' && row.assigned_agent_id === null && row.lease_token === null), 'expected all run items passed and detached from leases');
+  assertOk(agentRows.rows.find((row) => row.agent_id === '88888888-8888-8888-8888-888888888881')?.max_parallel_slots === 2, 'expected chromium agent max_parallel_slots=2');
+  assertOk(leaseRows.rows.length === 3, `expected 3 lease rows, got ${leaseRows.rows.length}`);
+  assertOk(leaseRows.rows.filter((row) => row.status === 'completed').length === 2, 'expected 2 completed leases');
+  assertOk(leaseRows.rows.filter((row) => row.status === 'canceled').length === 1, 'expected 1 canceled lease');
+  assertOk(leaseRows.rows.every((row) => row.released_at), 'expected every lease to be released');
   assertOk(runItemRows.rows.every((row) => Array.isArray(row.required_capabilities_json) && row.required_capabilities_json.includes('web') && row.required_capabilities_json.includes('browser:chromium')), 'expected required capabilities to include web and browser:chromium');
+  assertOk(runItemRows.rows.every((row) => row.assigned_agent_id === null && row.lease_token === null && row.control_state === 'active'), 'expected all run items detached from agent, lease and control state');
+  assertOk(artifactTypeSets.every((types) => types.has('screenshot') && types.has('trace') && types.has('video')), 'expected each run item to have screenshot/trace/video artifacts');
+  assertOk(artifactSamples.length === 3, `expected artifact samples for screenshot/trace/video, got ${artifactSamples.length}`);
+  assertOk(runsPage.body.items.length >= 3, 'expected at least 3 runs in list response');
 
   console.log(JSON.stringify({
     health: health.body,
     enqueueStatusCodes: enqueueResponses.map((response) => response.status),
-    queuedRunIds: enqueueResponses.map((response) => response.body.run.id),
-    queuedJobIds: enqueueResponses.map((response) => response.body.job.jobId),
+    queuedRunIds,
+    queuedJobIds,
     firefoxCycle,
     cycleResults,
+    observedActiveLeases,
+    pauseResponseStatus: pauseResponse.status,
+    pausedRunItemState,
+    resumeResponseStatus: resumeResponse.status,
+    resumedRunItemState,
+    cancelResponseStatus: cancelResponse.status,
     targetHits: hitPaths,
     firstUserAgent: interactionHits[0]?.userAgent ?? null,
     submissions: targetServer.submissions,
     runsApiStatuses: runsPage.body.items.map((item) => ({ id: item.id, status: item.status })),
-    firstRunItemStatuses: runItemsPage.body.items.map((item) => ({ id: item.id, status: item.status, requiredCapabilities: item.summary?.required_capabilities ?? [] })),
-    stepEventCountsByRun: stepEventsByRun.map((response) => response.body.items.length),
+    firstRunItemStatuses: firstRunItemsPage.body.items.map((item) => ({
+      id: item.id,
+      status: item.status,
+      requiredCapabilities: item.summary?.required_capabilities ?? [],
+      controlState: item.summary?.control_state ?? null,
+    })),
+    stepEventStatusesByRun: stepEventsByRun.map((response) => response.body.items.map((item) => `${item.source_step_id}:${item.status}`)),
+    artifactTypesByRunItem: artifactsByRunItem.map((response) => response.body.items.map((item) => item.artifact_type)),
+    artifactSamples,
     jobEventTypesByJob: jobEventsByJob.map((response) => response.body.items.map((item) => item.envelope.event_type)),
     agentRows: agentRows.rows,
     leaseRows: leaseRows.rows,

@@ -61,3 +61,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-115908-control-plane-agent-worker-postgresql-evidence.md` - 把 control-plane + agent + worker + PostgreSQL 做成真正的调度系统 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-124416-playwright-agent-capability-lease-evidence.md` - 真实 Playwright 调度执行与 agent capability/lease 正式化 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-133052-cancel-pause-resume-artifact-evidence.md` - 并发槽位、cancel/pause/resume 与 artifact 真采集闭环 的测试举证记录。

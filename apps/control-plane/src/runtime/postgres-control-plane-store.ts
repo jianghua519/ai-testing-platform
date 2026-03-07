@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import type {
   ControlPlaneAcquireLeaseInput,
   ControlPlaneAcquireLeaseResult,
+  ControlPlaneArtifactRecord,
   ControlPlaneCompleteLeaseInput,
   ControlPlaneEnqueueWebRunInput,
   ControlPlaneEnqueueWebRunResult,
@@ -10,6 +11,7 @@ import type {
   ControlPlaneHeartbeatLeaseInput,
   ControlPlaneJobLeaseRecord,
   ControlPlaneAgentRecord,
+  ControlPlaneListArtifactsQuery,
   ControlPlaneListRunItemsQuery,
   ControlPlaneListRunsQuery,
   ControlPlaneListStepEventsQuery,
@@ -25,7 +27,7 @@ import type {
   RecordRunnerEventResult,
   RunnerResultEnvelope,
 } from '../types.js';
-import type { CompiledStep } from '@aiwtp/web-dsl-schema';
+import type { ArtifactReference, CompiledStep } from '@aiwtp/web-dsl-schema';
 import type {
   ResultReportedEnvelope,
   StepResultReportedEnvelope,
@@ -109,6 +111,8 @@ interface RunItemProjectionRow {
   required_capabilities_json: string[] | string;
   assigned_agent_id: string | null;
   lease_token: string | null;
+  control_state: string | null;
+  control_reason: string | null;
   started_at: string | null;
   finished_at: string | null;
   last_event_id: string;
@@ -166,9 +170,27 @@ interface AgentRow {
   status: string;
   capabilities_json: string[] | string;
   metadata_json: Record<string, unknown> | string;
+  max_parallel_slots: number;
   last_heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface ArtifactRow {
+  artifact_id: string;
+  tenant_id: string;
+  project_id: string;
+  run_id: string | null;
+  run_item_id: string | null;
+  step_event_id: string | null;
+  job_id: string | null;
+  artifact_type: string;
+  storage_uri: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  sha256: string | null;
+  metadata_json: Record<string, unknown> | string;
+  created_at: string;
 }
 
 interface LeaseRow {
@@ -205,6 +227,12 @@ const parseJsonColumn = <T>(value: T | string | null): T | null => {
 
   return typeof value === 'string' ? JSON.parse(value) as T : value;
 };
+
+const isArtifactReference = (value: unknown): value is ArtifactReference =>
+  typeof value === 'object'
+  && value !== null
+  && typeof (value as ArtifactReference).kind === 'string'
+  && typeof (value as ArtifactReference).uri === 'string';
 
 const isStepResultEnvelope = (envelope: RunnerResultEnvelope): envelope is StepResultReportedEnvelope =>
   envelope.event_type === 'step.result_reported';
@@ -326,6 +354,8 @@ const mapRunItemProjection = (row: RunItemProjectionRow): ControlPlaneRunItemRec
   requiredCapabilities: parseJsonColumn<string[]>(row.required_capabilities_json) ?? [],
   assignedAgentId: row.assigned_agent_id,
   leaseToken: row.lease_token,
+  controlState: row.control_state,
+  controlReason: row.control_reason,
   startedAt: row.started_at,
   finishedAt: row.finished_at,
   lastEventId: row.last_event_id,
@@ -365,9 +395,27 @@ const mapAgent = (row: AgentRow): ControlPlaneAgentRecord => ({
   status: row.status,
   capabilities: normalizeCapabilities(parseJsonColumn<string[]>(row.capabilities_json) ?? []),
   metadata: parseJsonColumn<Record<string, unknown>>(row.metadata_json) ?? {},
+  maxParallelSlots: row.max_parallel_slots,
   lastHeartbeatAt: row.last_heartbeat_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+});
+
+const mapArtifact = (row: ArtifactRow): ControlPlaneArtifactRecord => ({
+  artifactId: row.artifact_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  runId: row.run_id,
+  runItemId: row.run_item_id,
+  stepEventId: row.step_event_id,
+  jobId: row.job_id,
+  artifactType: row.artifact_type,
+  storageUri: row.storage_uri,
+  contentType: row.content_type,
+  sizeBytes: row.size_bytes,
+  sha256: row.sha256,
+  metadata: parseJsonColumn<Record<string, unknown>>(row.metadata_json) ?? {},
+  createdAt: row.created_at,
 });
 
 const mapLease = (row: LeaseRow): ControlPlaneJobLeaseRecord => ({
@@ -548,6 +596,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         requiredCapabilities,
         assignedAgentId: null,
         leaseToken: null,
+        controlState: 'active',
+        controlReason: null,
         startedAt: null,
         finishedAt: null,
         lastEventId: queueEventId,
@@ -572,9 +622,10 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          status,
          capabilities_json,
          metadata_json,
+         max_parallel_slots,
          last_heartbeat_at
        ) values (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, now()
+         $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, now()
        )
        on conflict (agent_id) do update set
          tenant_id = excluded.tenant_id,
@@ -586,10 +637,11 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
          status = excluded.status,
          capabilities_json = excluded.capabilities_json,
          metadata_json = excluded.metadata_json,
+         max_parallel_slots = excluded.max_parallel_slots,
          last_heartbeat_at = now(),
          updated_at = now()
        returning agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
-                 capabilities_json, metadata_json, last_heartbeat_at, created_at, updated_at`,
+                 capabilities_json, metadata_json, max_parallel_slots, last_heartbeat_at, created_at, updated_at`,
       [
         input.agentId,
         input.tenantId,
@@ -601,6 +653,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         input.status ?? 'online',
         JSON.stringify(capabilities),
         JSON.stringify(input.metadata ?? {}),
+        Math.max(1, input.maxParallelSlots ?? 1),
       ],
     );
 
@@ -614,16 +667,18 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
        set status = coalesce($2, status),
            capabilities_json = coalesce($3::jsonb, capabilities_json),
            metadata_json = coalesce($4::jsonb, metadata_json),
+           max_parallel_slots = coalesce($5, max_parallel_slots),
            last_heartbeat_at = now(),
            updated_at = now()
        where agent_id = $1
        returning agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
-                 capabilities_json, metadata_json, last_heartbeat_at, created_at, updated_at`,
+                 capabilities_json, metadata_json, max_parallel_slots, last_heartbeat_at, created_at, updated_at`,
       [
         agentId,
         input.status ?? null,
         capabilities ? JSON.stringify(capabilities) : null,
         input.metadata ? JSON.stringify(input.metadata) : null,
+        input.maxParallelSlots ? Math.max(1, input.maxParallelSlots) : null,
       ],
     );
 
@@ -638,7 +693,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       const agentResult = await client.query<AgentRow>(
         `select agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
-                capabilities_json, metadata_json, last_heartbeat_at, created_at, updated_at
+                capabilities_json, metadata_json, max_parallel_slots, last_heartbeat_at, created_at, updated_at
          from agents
          where agent_id = $1
          limit 1
@@ -653,13 +708,27 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       const agent = mapAgent(agentResult.rows[0]);
       const supportedJobKinds = input.supportedJobKinds.length > 0 ? input.supportedJobKinds : ['web'];
       const agentCapabilities = normalizeCapabilities(agent.capabilities);
+      const activeLeaseCountResult = await client.query<{ active_lease_count: number }>(
+        `select count(*)::int as active_lease_count
+         from job_leases
+         where agent_id = $1
+           and released_at is null`,
+        [agentId],
+      );
+      const activeLeaseCount = activeLeaseCountResult.rows[0]?.active_lease_count ?? 0;
+      if (activeLeaseCount >= agent.maxParallelSlots) {
+        await client.query('commit');
+        return undefined;
+      }
       const candidateResult = await client.query<QueuedRunItemRow>(
         `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-                required_capabilities_json, assigned_agent_id, lease_token, last_event_id, created_at, updated_at, job_payload_json
+                required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
+                last_event_id, created_at, updated_at, job_payload_json
          from run_items
          where tenant_id = $1
            and ($2::text is null or project_id = $2)
            and status = 'pending'
+           and control_state = 'active'
            and job_kind = any($3::text[])
            and coalesce(required_capabilities_json, '[]'::jsonb) <@ $4::jsonb
          order by created_at asc, run_item_id asc
@@ -797,6 +866,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         `update run_items
          set assigned_agent_id = null,
              lease_token = null,
+             control_state = 'active',
+             control_reason = null,
              status = case
                when status in ('passed', 'failed', 'canceled') then status
                else $2
@@ -821,6 +892,186 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
       await client.query('commit');
       return lease;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async pauseRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const runResult = await client.query<RunProjectionRow>(
+        `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+         from runs
+         where run_id = $1
+         limit 1
+         for update`,
+        [runId],
+      );
+      if (runResult.rows.length === 0) {
+        await client.query('rollback');
+        return undefined;
+      }
+
+      await client.query(
+        `update run_items
+         set control_state = case
+               when status in ('passed', 'failed', 'canceled') then control_state
+               else 'pause_requested'
+             end,
+             control_reason = case
+               when status in ('passed', 'failed', 'canceled') then control_reason
+               else 'run paused by control plane'
+             end,
+             updated_at = now()
+         where run_id = $1`,
+        [runId],
+      );
+      await client.query(
+        `update runs
+         set updated_at = now()
+         where run_id = $1`,
+        [runId],
+      );
+
+      await client.query('commit');
+      return this.getRun(runId);
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async resumeRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const runResult = await client.query<RunProjectionRow>(
+        `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+         from runs
+         where run_id = $1
+         limit 1
+         for update`,
+        [runId],
+      );
+      if (runResult.rows.length === 0) {
+        await client.query('rollback');
+        return undefined;
+      }
+
+      await client.query(
+        `update run_items
+         set control_state = 'active',
+             control_reason = null,
+             updated_at = now()
+         where run_id = $1
+           and control_state in ('pause_requested', 'paused')`,
+        [runId],
+      );
+      await client.query(
+        `update runs
+         set status = case
+               when status = 'canceling' then status
+               else status
+             end,
+             updated_at = now()
+         where run_id = $1`,
+        [runId],
+      );
+
+      await client.query('commit');
+      return this.getRun(runId);
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async cancelRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const runResult = await client.query<RunProjectionRow>(
+        `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
+         from runs
+         where run_id = $1
+         limit 1
+         for update`,
+        [runId],
+      );
+      if (runResult.rows.length === 0) {
+        await client.query('rollback');
+        return undefined;
+      }
+
+      await client.query(
+        `update run_items
+         set status = case when status = 'pending' then 'canceled' else status end,
+             finished_at = case when status = 'pending' then now() else finished_at end,
+             control_state = case
+               when status in ('passed', 'failed', 'canceled') then 'active'
+               when status = 'pending' then 'active'
+               else 'cancel_requested'
+             end,
+             control_reason = case
+               when status in ('passed', 'failed', 'canceled') then control_reason
+               when status = 'pending' then null
+               else 'run canceled by control plane'
+             end,
+             assigned_agent_id = case when status = 'pending' then null else assigned_agent_id end,
+             lease_token = case when status = 'pending' then null else lease_token end,
+             updated_at = now()
+         where run_id = $1`,
+        [runId],
+      );
+
+      const pendingLeaseTokens = await client.query<{ lease_token: string }>(
+        `select lease_token
+         from run_items
+         where run_id = $1
+           and status = 'canceled'
+           and lease_token is not null`,
+        [runId],
+      );
+      if (pendingLeaseTokens.rows.length > 0) {
+        await client.query(
+          `update job_leases
+           set status = 'canceled',
+               released_at = now(),
+               heartbeat_at = now()
+           where lease_token = any($1::text[])
+             and released_at is null`,
+          [pendingLeaseTokens.rows.map((row) => row.lease_token)],
+        );
+      }
+
+      const activeRemaining = await client.query<{ active_count: number }>(
+        `select count(*)::int as active_count
+         from run_items
+         where run_id = $1
+           and status not in ('passed', 'failed', 'canceled')`,
+        [runId],
+      );
+      const nextRunStatus = (activeRemaining.rows[0]?.active_count ?? 0) > 0 ? 'canceling' : 'canceled';
+      await client.query(
+        `update runs
+         set status = $2,
+             finished_at = case when $2 = 'canceled' then coalesce(finished_at, now()) else finished_at end,
+             updated_at = now()
+         where run_id = $1`,
+        [runId, nextRunStatus],
+      );
+
+      await client.query('commit');
+      return this.getRun(runId);
     } catch (error) {
       await client.query('rollback');
       throw error;
@@ -883,8 +1134,24 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       await this.linkStepDecisions(client, envelope);
       if (isStepResultEnvelope(envelope)) {
         await this.insertStepEventProjection(client, envelope);
+        await this.insertArtifactRecords(client, envelope.payload.artifacts ?? [], {
+          tenantId: envelope.tenant_id,
+          projectId: envelope.project_id,
+          runId: envelope.payload.run_id,
+          runItemId: envelope.payload.run_item_id,
+          jobId: envelope.payload.job_id,
+          stepEventId: envelope.event_id,
+        });
       }
       if (isJobResultEnvelope(envelope)) {
+        await this.insertArtifactRecords(client, envelope.payload.artifacts ?? [], {
+          tenantId: envelope.tenant_id,
+          projectId: envelope.project_id,
+          runId: envelope.payload.run_id,
+          runItemId: envelope.payload.run_item_id,
+          jobId: envelope.payload.job_id,
+          stepEventId: null,
+        });
         await this.releaseLeaseForCompletedJob(client, envelope);
       }
 
@@ -994,6 +1261,93 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     }
   }
 
+  async resolveStepControlDecision(
+    jobId: string,
+    _runId: string,
+    runItemId: string,
+    sourceStepId: string,
+  ): Promise<StepControlResponse | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const runItemResult = await client.query<{ control_state: string | null; control_reason: string | null }>(
+        `select control_state, control_reason
+         from run_items
+         where run_item_id = $1
+           and job_id = $2
+         limit 1
+         for update`,
+        [runItemId, jobId],
+      );
+      const controlState = runItemResult.rows[0]?.control_state ?? 'active';
+      const controlReason = runItemResult.rows[0]?.control_reason ?? null;
+
+      if (controlState === 'cancel_requested') {
+        await client.query('commit');
+        return {
+          action: 'cancel',
+          reason: controlReason ?? 'run canceled by control plane',
+        };
+      }
+
+      if (controlState === 'pause_requested' || controlState === 'paused') {
+        if (controlState === 'pause_requested') {
+          await client.query(
+            `update run_items
+             set control_state = 'paused',
+                 updated_at = now()
+             where run_item_id = $1`,
+            [runItemId],
+          );
+        }
+        await client.query('commit');
+        return {
+          action: 'pause',
+          reason: controlReason ?? 'run paused by control plane',
+          resume_after_ms: 250,
+        };
+      }
+
+      const decisionResult = await client.query<StepDecisionRow>(
+        `select decision_id, action, reason, replacement_step_json, resume_after_ms
+         from step_decisions
+         where job_id = $1
+           and source_step_id = $2
+           and consumed_at is null
+         order by decision_id asc
+         limit 1`,
+        [jobId, sourceStepId],
+      );
+
+      if (decisionResult.rows.length === 0) {
+        await client.query('commit');
+        return undefined;
+      }
+
+      const decisionRow = decisionResult.rows[0];
+      const updateResult = await client.query(
+        `update step_decisions
+         set consumed_at = now()
+         where decision_id = $1
+           and consumed_at is null`,
+        [decisionRow.decision_id],
+      );
+
+      if ((updateResult.rowCount ?? 0) !== 1) {
+        await client.query('rollback');
+        return undefined;
+      }
+
+      await client.query('commit');
+      return buildStepDecision(decisionRow);
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async getRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
     const result = await this.pool.query<RunProjectionRow>(
       `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
@@ -1034,7 +1388,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
     const result = await this.pool.query<RunItemProjectionRow>(
       `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-              required_capabilities_json, assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
+              required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
+              started_at, finished_at, last_event_id, created_at, updated_at
        from run_items
        where run_item_id = $1
        limit 1`,
@@ -1047,7 +1402,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.runId];
     let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
-                      required_capabilities_json, assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
+                      required_capabilities_json, assigned_agent_id, lease_token, control_state, control_reason,
+                      started_at, finished_at, last_event_id, created_at, updated_at
        from run_items
        where run_id = $1`;
 
@@ -1118,6 +1474,58 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     return toPage(result.rows.map(mapStepEventProjection), query.limit, (stepEvent) => ({
       primary: stepEvent.receivedAt,
       secondary: stepEvent.eventId,
+    }));
+  }
+
+  async listArtifactsByRun(runId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>> {
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [runId];
+    let sql = `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
+                      artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, created_at
+       from artifacts
+       where run_id = $1`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (created_at, artifact_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by created_at desc, artifact_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<ArtifactRow>(sql, values);
+    return toPage(result.rows.map(mapArtifact), query.limit, (artifact) => ({
+      primary: artifact.createdAt,
+      secondary: artifact.artifactId,
+    }));
+  }
+
+  async listArtifactsByRunItem(runItemId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>> {
+    const cursor = decodeCursor(query.cursor);
+    const values: unknown[] = [runItemId];
+    let sql = `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
+                      artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, created_at
+       from artifacts
+       where run_item_id = $1`;
+
+    if (cursor) {
+      values.push(cursor.primary, cursor.secondary);
+      sql += `
+         and (created_at, artifact_id) < ($2::timestamptz, $3)`;
+    }
+
+    values.push(query.limit + 1);
+    sql += `
+       order by created_at desc, artifact_id desc
+       limit $${values.length}`;
+
+    const result = await this.pool.query<ArtifactRow>(sql, values);
+    return toPage(result.rows.map(mapArtifact), query.limit, (artifact) => ({
+      primary: artifact.createdAt,
+      secondary: artifact.artifactId,
     }));
   }
 
@@ -1325,6 +1733,66 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     );
   }
 
+  private async insertArtifactRecords(
+    client: SqlPoolClientLike,
+    artifacts: unknown[],
+    context: {
+      tenantId: string;
+      projectId: string;
+      runId: string;
+      runItemId: string;
+      jobId: string;
+      stepEventId: string | null;
+    },
+  ): Promise<void> {
+    for (const artifact of artifacts) {
+      if (!isArtifactReference(artifact)) {
+        continue;
+      }
+
+      await client.query(
+        `insert into artifacts (
+           artifact_id,
+           tenant_id,
+           project_id,
+           run_id,
+           run_item_id,
+           step_event_id,
+           job_id,
+           artifact_type,
+           storage_uri,
+           content_type,
+           size_bytes,
+           sha256,
+           metadata_json
+         ) values (
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb
+         )
+         on conflict (artifact_id) do update set
+           storage_uri = excluded.storage_uri,
+           content_type = excluded.content_type,
+           size_bytes = excluded.size_bytes,
+           sha256 = excluded.sha256,
+           metadata_json = excluded.metadata_json`,
+        [
+          artifact.artifactId ?? randomUUID(),
+          context.tenantId,
+          context.projectId,
+          context.runId,
+          context.runItemId,
+          context.stepEventId,
+          context.jobId,
+          artifact.kind,
+          artifact.uri,
+          artifact.contentType ?? null,
+          artifact.sizeBytes ?? null,
+          artifact.sha256 ?? null,
+          JSON.stringify(artifact.metadata ?? {}),
+        ],
+      );
+    }
+  }
+
   private async linkStepDecisions(client: SqlPoolClientLike, envelope: RunnerResultEnvelope): Promise<void> {
     await client.query(
       `update step_decisions
@@ -1361,6 +1829,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       `update run_items
        set assigned_agent_id = null,
            lease_token = null,
+           control_state = 'active',
+           control_reason = null,
            updated_at = now()
        where job_id = $1`,
       [envelope.payload.job_id],

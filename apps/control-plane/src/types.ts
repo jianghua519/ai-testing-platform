@@ -80,6 +80,8 @@ export interface ControlPlaneRunItemRecord {
   requiredCapabilities?: string[] | null;
   assignedAgentId?: string | null;
   leaseToken?: string | null;
+  controlState?: string | null;
+  controlReason?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   lastEventId: string;
@@ -119,9 +121,27 @@ export interface ControlPlaneAgentRecord {
   status: string;
   capabilities: string[];
   metadata: Record<string, unknown>;
+  maxParallelSlots: number;
   lastHeartbeatAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ControlPlaneArtifactRecord {
+  artifactId: string;
+  tenantId: string;
+  projectId: string;
+  runId: string | null;
+  runItemId: string | null;
+  stepEventId: string | null;
+  jobId: string | null;
+  artifactType: string;
+  storageUri: string;
+  contentType: string | null;
+  sizeBytes: number | null;
+  sha256: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ControlPlaneJobLeaseRecord {
@@ -157,6 +177,11 @@ export interface ControlPlaneListStepEventsQuery {
   cursor?: string;
 }
 
+export interface ControlPlaneListArtifactsQuery {
+  limit: number;
+  cursor?: string;
+}
+
 export interface ControlPlaneEnqueueWebRunInput {
   tenantId: string;
   projectId: string;
@@ -187,12 +212,14 @@ export interface ControlPlaneRegisterAgentInput {
   capabilities: string[];
   metadata?: Record<string, unknown>;
   status?: string;
+  maxParallelSlots?: number;
 }
 
 export interface ControlPlaneHeartbeatAgentInput {
   status?: string;
   capabilities?: string[];
   metadata?: Record<string, unknown>;
+  maxParallelSlots?: number;
 }
 
 export interface ControlPlaneAcquireLeaseInput {
@@ -213,6 +240,8 @@ export interface ControlPlaneCompleteLeaseInput {
   status: 'succeeded' | 'failed' | 'canceled';
 }
 
+export type ControlPlaneRunControlAction = 'pause' | 'resume' | 'cancel';
+
 export interface ControlPlaneSchedulingStore {
   enqueueWebRun(input: ControlPlaneEnqueueWebRunInput): Promise<ControlPlaneEnqueueWebRunResult>;
   registerAgent(input: ControlPlaneRegisterAgentInput): Promise<ControlPlaneAgentRecord>;
@@ -220,6 +249,9 @@ export interface ControlPlaneSchedulingStore {
   acquireLease(agentId: string, input: ControlPlaneAcquireLeaseInput): Promise<ControlPlaneAcquireLeaseResult | undefined>;
   heartbeatLease(leaseToken: string, input: ControlPlaneHeartbeatLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined>;
   completeLease(leaseToken: string, input: ControlPlaneCompleteLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined>;
+  pauseRun?(runId: string): Promise<ControlPlaneRunRecord | undefined>;
+  resumeRun?(runId: string): Promise<ControlPlaneRunRecord | undefined>;
+  cancelRun?(runId: string): Promise<ControlPlaneRunRecord | undefined>;
 }
 
 export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> {
@@ -234,6 +266,14 @@ export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> 
   listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>>;
   listStepEventsByRun(runId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>>;
   listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>>;
+  listArtifactsByRun?(runId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>>;
+  listArtifactsByRunItem?(runItemId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>>;
+  resolveStepControlDecision?(
+    jobId: string,
+    runId: string,
+    runItemId: string,
+    sourceStepId: string,
+  ): Promise<StepControlResponse | undefined>;
   snapshot(): Promise<ControlPlaneStateSnapshot>;
   close?(): Promise<void>;
 }

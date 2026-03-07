@@ -24,6 +24,11 @@ export class HttpStepController implements StepExecutionController {
       switch (decision.action) {
         case 'execute':
           return { action: 'execute' };
+        case 'cancel':
+          return {
+            action: 'cancel',
+            reason: decision.reason ?? 'step canceled by remote controller',
+          };
         case 'skip':
           return {
             action: 'skip',
@@ -117,6 +122,13 @@ export class HttpStepController implements StepExecutionController {
 
     if (value.action === 'execute') {
       return { action: 'execute' };
+    }
+
+    if (value.action === 'cancel') {
+      return {
+        action: 'cancel',
+        reason: typeof value.reason === 'string' ? value.reason : undefined,
+      };
     }
 
     if (value.action === 'skip') {

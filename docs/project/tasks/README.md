@@ -65,3 +65,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-115908-control-plane-agent-worker-postgresql-project-task.md` - 把 control-plane + agent + worker + PostgreSQL 做成真正的调度系统
 
 - `2026-03-07`: `docs/project/tasks/20260307-124416-playwright-agent-capability-lease-project-task.md` - 真实 Playwright 调度执行与 agent capability/lease 正式化
+
+- `2026-03-07`: `docs/project/tasks/20260307-133052-cancel-pause-resume-artifact-project-task.md` - 并发槽位、cancel/pause/resume 与 artifact 真采集闭环

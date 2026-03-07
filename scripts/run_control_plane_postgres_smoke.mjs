@@ -91,6 +91,7 @@ const main = async () => {
     startedAt: '2026-03-07T10:00:00.000Z',
     finishedAt: '2026-03-07T10:00:00.500Z',
     durationMs: 500,
+    artifacts: [],
     stepResults: [stepResult],
   };
 

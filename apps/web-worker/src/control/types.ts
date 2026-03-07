@@ -19,7 +19,7 @@ export interface StepControlRequest {
 }
 
 export interface StepControlResponse {
-  action: 'execute' | 'skip' | 'replace' | 'pause';
+  action: 'execute' | 'skip' | 'replace' | 'pause' | 'cancel';
   reason?: string;
   replacement_step?: CompiledStep;
   resume_after_ms?: number;

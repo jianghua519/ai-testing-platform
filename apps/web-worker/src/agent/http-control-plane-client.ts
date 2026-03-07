@@ -46,6 +46,7 @@ export class HttpAgentControlPlaneClient implements AgentControlPlaneClient {
       runtime_kind: descriptor.runtimeKind,
       capabilities: descriptor.capabilities,
       metadata: descriptor.metadata ?? {},
+      max_parallel_slots: descriptor.maxParallelSlots,
     });
   }
 
@@ -54,6 +55,7 @@ export class HttpAgentControlPlaneClient implements AgentControlPlaneClient {
       status: input.status,
       capabilities: input.capabilities,
       metadata: input.metadata,
+      max_parallel_slots: input.maxParallelSlots,
     });
   }
 

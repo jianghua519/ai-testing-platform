@@ -16,10 +16,9 @@ export class ExtractStepExecutor implements StepExecutor {
       for (const variable of extractedVariables) {
         session.variables.set(variable.name, variable.value);
       }
-      const artifacts = await session.artifacts.collectForStep(step.sourceStepId);
       const finishedAt = session.clock.now();
       return {
-        stepResult: buildStepResult({ step, session, startedAt, finishedAt, status: 'passed', artifacts, extractedVariables }),
+        stepResult: buildStepResult({ step, session, startedAt, finishedAt, status: 'passed', extractedVariables }),
         childResults: [],
       };
     } catch (error) {

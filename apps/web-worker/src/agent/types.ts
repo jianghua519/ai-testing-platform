@@ -10,6 +10,7 @@ export interface WorkerAgentDescriptor {
   runtimeKind: string;
   capabilities: string[];
   metadata?: Record<string, unknown>;
+  maxParallelSlots?: number;
 }
 
 export interface WorkerAgentRecord {
@@ -23,6 +24,7 @@ export interface WorkerAgentRecord {
   status: string;
   capabilities: string[];
   metadata: Record<string, unknown>;
+  max_parallel_slots: number;
   last_heartbeat_at: string | null;
   created_at: string;
   updated_at: string;
@@ -52,6 +54,7 @@ export interface AgentHeartbeatInput {
   status?: string;
   capabilities?: string[];
   metadata?: Record<string, unknown>;
+  maxParallelSlots?: number;
 }
 
 export interface AcquireLeaseInput {
@@ -85,6 +88,7 @@ export interface PollingWebAgentOptions {
   leaseHeartbeatIntervalMs?: number;
   idleHeartbeatStatus?: string;
   busyHeartbeatStatus?: string;
+  maxParallelSlots?: number;
 }
 
 export interface PollingCycleResult {

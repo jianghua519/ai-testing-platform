@@ -12,10 +12,9 @@ export class AssertStepExecutor implements StepExecutor {
     const startedAt = session.clock.now();
     try {
       await driver.evaluateAssertions(step.expectations, session, step.timeoutMs);
-      const artifacts = await session.artifacts.collectForStep(step.sourceStepId);
       const finishedAt = session.clock.now();
       return {
-        stepResult: buildStepResult({ step, session, startedAt, finishedAt, status: 'passed', artifacts }),
+        stepResult: buildStepResult({ step, session, startedAt, finishedAt, status: 'passed' }),
         childResults: [],
       };
     } catch (error) {

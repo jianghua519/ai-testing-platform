@@ -11,6 +11,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const baseUrl = process.env.CONTROL_PLANE_BASE_URL ?? 'http://127.0.0.1:8080';
 const pollIntervalMs = Number.parseInt(process.env.WEB_AGENT_POLL_INTERVAL_MS ?? '1000', 10);
 const maxIdleIterations = Number.parseInt(process.env.WEB_AGENT_MAX_IDLE_ITERATIONS ?? '0', 10);
+const maxParallelSlots = Number.parseInt(process.env.WEB_AGENT_MAX_PARALLEL_SLOTS ?? '1', 10);
 const supportedJobKinds = (process.env.WEB_AGENT_SUPPORTED_JOB_KINDS ?? 'web')
   .split(',')
   .map((value) => value.trim())
@@ -48,6 +49,7 @@ const agent = new PollingWebAgent(
     architecture: process.env.WEB_AGENT_ARCHITECTURE ?? process.arch,
     runtimeKind: process.env.WEB_AGENT_RUNTIME_KIND ?? 'host',
     capabilities,
+    maxParallelSlots,
     metadata: {
       source: 'start_polling_web_agent',
       hostname: os.hostname(),
@@ -55,6 +57,7 @@ const agent = new PollingWebAgent(
   },
   {
     supportedJobKinds,
+    maxParallelSlots,
     leaseTtlSeconds: Number.parseInt(process.env.WEB_AGENT_LEASE_TTL_SECONDS ?? '60', 10),
     leaseHeartbeatIntervalMs: Number.parseInt(process.env.WEB_AGENT_LEASE_HEARTBEAT_INTERVAL_MS ?? '10000', 10),
   },
@@ -71,11 +74,13 @@ process.on('SIGTERM', () => {
 const results = [];
 let idleCount = 0;
 while (!stopping) {
-  const cycle = await agent.runOnce();
-  results.push(cycle);
-  console.log(JSON.stringify(cycle, null, 2));
+  const cycles = await agent.runSlotsOnce();
+  results.push(...cycles);
+  for (const cycle of cycles) {
+    console.log(JSON.stringify(cycle, null, 2));
+  }
 
-  if (cycle.status === 'idle') {
+  if (cycles.every((cycle) => cycle.status === 'idle')) {
     idleCount += 1;
     if (maxIdleIterations > 0 && idleCount >= maxIdleIterations) {
       break;

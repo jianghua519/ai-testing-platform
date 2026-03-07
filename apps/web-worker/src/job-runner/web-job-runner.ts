@@ -65,12 +65,33 @@ export class WebJobRunner {
     const browser = await this.browserLauncher.launch(compileResponse.compiledPlan.browserProfile);
     try {
       const session = await openExecutionSession(browser, compileResponse.compiledPlan, {
+        metadata,
         controller,
         observer: new PublishingStepObserver(metadata, this.publisher),
       });
       try {
-        const output = await this.adapter.executePlan(compileResponse.compiledPlan, session);
-        const status = output.planResult.status === 'passed' ? 'executed' : 'execution_failed';
+        let output = await this.adapter.executePlan(compileResponse.compiledPlan, session);
+        await session.context.close();
+        let planArtifacts = output.planResult.artifacts;
+        try {
+          planArtifacts = [
+            ...output.planResult.artifacts,
+            ...(await session.artifacts.finalizeAfterContextClose(compileResponse.compiledPlan, output.planResult, session)),
+          ];
+        } catch {
+          planArtifacts = output.planResult.artifacts;
+        }
+        output = {
+          planResult: {
+            ...output.planResult,
+            artifacts: planArtifacts,
+          },
+        };
+        const status = output.planResult.status === 'passed'
+          ? 'executed'
+          : output.planResult.status === 'canceled'
+            ? 'canceled'
+            : 'execution_failed';
         const result: WebWorkerResult = {
           metadata,
           status,
@@ -80,7 +101,9 @@ export class WebJobRunner {
         await this.publisher.publish(result);
         return result;
       } finally {
-        await session.context.close();
+        await session.context.close().catch(() => {
+          // Best-effort cleanup.
+        });
       }
     } finally {
       await browser.close();

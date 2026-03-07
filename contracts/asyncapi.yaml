@@ -149,7 +149,7 @@ components:
         source_step_id: { type: string }
         status:
           type: string
-          enum: [pending, running, passed, failed, skipped, error]
+          enum: [pending, running, passed, failed, skipped, canceled, error]
         started_at: { $ref: "#/components/schemas/ISO8601" }
         finished_at: { $ref: "#/components/schemas/ISO8601" }
         duration_ms: { type: integer, minimum: 0 }

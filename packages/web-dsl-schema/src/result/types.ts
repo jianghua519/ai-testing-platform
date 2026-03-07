@@ -1,10 +1,15 @@
 import type { ResolvedLocator } from '../compiled/types.js';
 
-export type StepExecutionStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'error';
+export type StepExecutionStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'canceled' | 'error';
 
 export interface ArtifactReference {
+  artifactId?: string;
   kind: 'screenshot' | 'trace' | 'video' | 'dom_snapshot' | 'network_capture';
   uri: string;
+  contentType?: string;
+  sizeBytes?: number;
+  sha256?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ExtractedVariable {
@@ -29,9 +34,10 @@ export interface StepResult {
 
 export interface PlanExecutionResult {
   compiledPlanId: string;
-  status: 'passed' | 'failed' | 'error';
+  status: 'passed' | 'failed' | 'canceled' | 'error';
   startedAt: string;
   finishedAt: string;
   durationMs: number;
+  artifacts: ArtifactReference[];
   stepResults: StepResult[];
 }

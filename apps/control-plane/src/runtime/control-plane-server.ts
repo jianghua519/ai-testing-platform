@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import type {
   ControlPlaneAcquireLeaseInput,
   ControlPlaneAgentRecord,
+  ControlPlaneArtifactRecord,
   ControlPlaneCompleteLeaseInput,
   ControlPlaneEnqueueWebRunInput,
   ControlPlaneHeartbeatAgentInput,
@@ -52,6 +53,7 @@ const readJson = async <T>(request: IncomingMessage): Promise<T> => {
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 const isString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
+const isPositiveInteger = (value: unknown): value is number => Number.isInteger(value) && Number(value) > 0;
 
 const isRunnerResultEnvelope = (value: unknown): value is RunnerResultEnvelope =>
   isObject(value) && typeof value.event_type === 'string' && isObject(value.payload) && typeof value.payload.job_id === 'string';
@@ -87,13 +89,15 @@ const isRegisterAgentRequest = (value: unknown): value is ControlPlaneRegisterAg
   && isString(value.architecture)
   && isString(value.runtimeKind ?? value.runtime_kind)
   && isStringArray(value.capabilities)
+  && (value.maxParallelSlots === undefined || value.max_parallel_slots === undefined || isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots))
   && (value.projectId === undefined || value.project_id === undefined || typeof (value.projectId ?? value.project_id) === 'string');
 
 const isHeartbeatAgentRequest = (value: unknown): value is ControlPlaneHeartbeatAgentInput =>
   isObject(value)
   && (value.status === undefined || isString(value.status))
   && (value.capabilities === undefined || isStringArray(value.capabilities))
-  && (value.metadata === undefined || isObject(value.metadata));
+  && (value.metadata === undefined || isObject(value.metadata))
+  && (value.maxParallelSlots === undefined || value.max_parallel_slots === undefined || isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots));
 
 const isAcquireLeaseRequest = (value: unknown): value is ControlPlaneAcquireLeaseInput =>
   isObject(value)
@@ -136,12 +140,18 @@ const normalizeRegisterAgent = (value: Record<string, unknown>): ControlPlaneReg
   capabilities: (value.capabilities as string[]) ?? [],
   metadata: isObject(value.metadata) ? value.metadata : undefined,
   status: typeof value.status === 'string' ? value.status : undefined,
+  maxParallelSlots: isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots)
+    ? Number(value.maxParallelSlots ?? value.max_parallel_slots)
+    : undefined,
 });
 
 const normalizeHeartbeatAgent = (value: Record<string, unknown>): ControlPlaneHeartbeatAgentInput => ({
   status: typeof value.status === 'string' ? value.status : undefined,
   capabilities: isStringArray(value.capabilities) ? value.capabilities : undefined,
   metadata: isObject(value.metadata) ? value.metadata : undefined,
+  maxParallelSlots: isPositiveInteger(value.maxParallelSlots ?? value.max_parallel_slots)
+    ? Number(value.maxParallelSlots ?? value.max_parallel_slots)
+    : undefined,
 });
 
 const normalizeAcquireLease = (value: Record<string, unknown>): ControlPlaneAcquireLeaseInput => ({
@@ -172,6 +182,8 @@ const toApiRunStatus = (status: string): string => {
       return 'succeeded';
     case 'failed':
       return 'failed';
+    case 'canceling':
+      return 'canceling';
     case 'canceled':
       return 'canceled';
     default:
@@ -226,6 +238,8 @@ const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
     required_capabilities: runItem.requiredCapabilities ?? undefined,
     assigned_agent_id: runItem.assignedAgentId ?? undefined,
     lease_token: runItem.leaseToken ?? undefined,
+    control_state: runItem.controlState ?? undefined,
+    control_reason: runItem.controlReason ?? undefined,
   },
 });
 
@@ -261,9 +275,27 @@ const toApiAgent = (agent: ControlPlaneAgentRecord) => ({
   status: agent.status,
   capabilities: agent.capabilities,
   metadata: agent.metadata,
+  max_parallel_slots: agent.maxParallelSlots,
   last_heartbeat_at: agent.lastHeartbeatAt,
   created_at: agent.createdAt,
   updated_at: agent.updatedAt,
+});
+
+const toApiArtifact = (artifact: ControlPlaneArtifactRecord) => ({
+  artifact_id: artifact.artifactId,
+  tenant_id: artifact.tenantId,
+  project_id: artifact.projectId,
+  run_id: artifact.runId,
+  run_item_id: artifact.runItemId,
+  step_event_id: artifact.stepEventId,
+  job_id: artifact.jobId,
+  artifact_type: artifact.artifactType,
+  storage_uri: artifact.storageUri,
+  content_type: artifact.contentType,
+  size_bytes: artifact.sizeBytes,
+  sha256: artifact.sha256,
+  metadata: artifact.metadata,
+  created_at: artifact.createdAt,
 });
 
 const toApiLease = (lease: ControlPlaneJobLeaseRecord) => ({
@@ -498,6 +530,60 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         return;
       }
 
+      const pauseRunMatch = matchPath(pathname, /^\/api\/v1\/internal\/runs\/([^/]+):pause$/);
+      if (method === 'POST' && pauseRunMatch) {
+        if (!store.pauseRun) {
+          notSupported(response, 'pause run');
+          return;
+        }
+
+        const [, runId] = pauseRunMatch;
+        const run = await store.pauseRun(runId);
+        if (!run) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+
+        json(response, 202, toApiRun(run));
+        return;
+      }
+
+      const resumeRunMatch = matchPath(pathname, /^\/api\/v1\/internal\/runs\/([^/]+):resume$/);
+      if (method === 'POST' && resumeRunMatch) {
+        if (!store.resumeRun) {
+          notSupported(response, 'resume run');
+          return;
+        }
+
+        const [, runId] = resumeRunMatch;
+        const run = await store.resumeRun(runId);
+        if (!run) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+
+        json(response, 202, toApiRun(run));
+        return;
+      }
+
+      const cancelRunMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+):cancel$/);
+      if (method === 'POST' && cancelRunMatch) {
+        if (!store.cancelRun) {
+          notSupported(response, 'cancel run');
+          return;
+        }
+
+        const [, runId] = cancelRunMatch;
+        const run = await store.cancelRun(runId);
+        if (!run) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+
+        json(response, 202, toApiRun(run));
+        return;
+      }
+
       if (method === 'POST' && pathname === '/api/v1/internal/runner-results') {
         const body = await readJson<unknown>(request);
         if (!isRunnerResultEnvelope(body)) {
@@ -519,7 +605,9 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
 
-        const decision = await store.dequeueStepDecision(jobId, sourceStepId);
+        const decision = store.resolveStepControlDecision
+          ? await store.resolveStepControlDecision(jobId, body.run_id, body.run_item_id, sourceStepId)
+          : await store.dequeueStepDecision(jobId, sourceStepId);
         if (!decision) {
           json(response, 204);
           return;
@@ -564,6 +652,22 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         return;
       }
 
+      const runArtifactsMatch = matchPath(pathname, /^\/api\/v1\/internal\/runs\/([^/]+)\/artifacts$/);
+      if (method === 'GET' && runArtifactsMatch) {
+        if (!store.listArtifactsByRun) {
+          notSupported(response, 'list run artifacts');
+          return;
+        }
+
+        const [, runId] = runArtifactsMatch;
+        const page = await store.listArtifactsByRun(runId, {
+          limit: parseLimit(url.searchParams.get('limit'), 200, 500),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiArtifact));
+        return;
+      }
+
       const runMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+)$/);
       if (method === 'GET' && runMatch) {
         const [, runId] = runMatch;
@@ -596,6 +700,22 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           cursor: url.searchParams.get('cursor') ?? undefined,
         });
         json(response, 200, toPaginatedPayload(page, toApiStepEvent));
+        return;
+      }
+
+      const artifactsMatch = matchPath(pathname, /^\/api\/v1\/internal\/run-items\/([^/]+)\/artifacts$/);
+      if (method === 'GET' && artifactsMatch) {
+        if (!store.listArtifactsByRunItem) {
+          notSupported(response, 'list run item artifacts');
+          return;
+        }
+
+        const [, runItemId] = artifactsMatch;
+        const page = await store.listArtifactsByRunItem(runItemId, {
+          limit: parseLimit(url.searchParams.get('limit'), 200, 500),
+          cursor: url.searchParams.get('cursor') ?? undefined,
+        });
+        json(response, 200, toPaginatedPayload(page, toApiArtifact));
         return;
       }
 

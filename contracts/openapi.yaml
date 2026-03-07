@@ -333,6 +333,34 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/run-items/{run_item_id}/artifacts:
+    get:
+      tags: [Internal]
+      summary: List projected artifacts for a run item
+      parameters:
+        - in: path
+          name: run_item_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalArtifactListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/internal/runs/{run_id}/step-events:
     get:
       tags: [Internal]
@@ -360,6 +388,68 @@ paths:
                 $ref: "#/components/schemas/InternalStepEventListResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/runs/{run_id}/artifacts:
+    get:
+      tags: [Internal]
+      summary: List projected artifacts for a run
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalArtifactListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/runs/{run_id}:pause:
+    post:
+      tags: [Internal]
+      summary: Request pause for a run
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/runs/{run_id}:resume:
+    post:
+      tags: [Internal]
+      summary: Resume a paused run
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Run"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/internal/migrations:
     get:
@@ -773,6 +863,9 @@ components:
           items:
             type: object
             additionalProperties: true
+        summary:
+          type: object
+          additionalProperties: true
     RunItemListResponse:
       type: object
       required: [items]
@@ -860,7 +953,7 @@ components:
       properties:
         action:
           type: string
-          enum: [execute, skip, replace, pause]
+          enum: [execute, skip, replace, pause, cancel]
         reason: { type: string }
         replacement_step:
           $ref: "#/components/schemas/WorkerCompiledStep"
@@ -917,7 +1010,7 @@ components:
         source_step_id: { type: string, minLength: 1 }
         status:
           type: string
-          enum: [passed, failed, skipped]
+          enum: [passed, failed, skipped, canceled]
         started_at: { $ref: "#/components/schemas/ISO8601" }
         finished_at: { $ref: "#/components/schemas/ISO8601" }
         duration_ms: { type: integer, minimum: 0 }
@@ -942,6 +1035,43 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InternalStepEvent"
+        next_cursor:
+          type: string
+    InternalArtifact:
+      type: object
+      required:
+        - artifact_id
+        - tenant_id
+        - project_id
+        - artifact_type
+        - storage_uri
+        - metadata
+        - created_at
+      properties:
+        artifact_id: { type: string, minLength: 1 }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        step_event_id: { $ref: "#/components/schemas/UUID" }
+        job_id: { $ref: "#/components/schemas/UUID" }
+        artifact_type: { type: string, minLength: 1 }
+        storage_uri: { type: string, minLength: 1 }
+        content_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+    InternalArtifactListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InternalArtifact"
         next_cursor:
           type: string
     InternalMigration:
@@ -1011,6 +1141,9 @@ components:
           type: object
           additionalProperties: true
         status: { type: string }
+        max_parallel_slots:
+          type: integer
+          minimum: 1
     InternalAgentHeartbeatRequest:
       type: object
       properties:
@@ -1021,6 +1154,9 @@ components:
         metadata:
           type: object
           additionalProperties: true
+        max_parallel_slots:
+          type: integer
+          minimum: 1
     InternalAgent:
       type: object
       required:
@@ -1033,6 +1169,7 @@ components:
         - status
         - capabilities
         - metadata
+        - max_parallel_slots
         - created_at
         - updated_at
       properties:
@@ -1050,6 +1187,9 @@ components:
         metadata:
           type: object
           additionalProperties: true
+        max_parallel_slots:
+          type: integer
+          minimum: 1
         last_heartbeat_at: { $ref: "#/components/schemas/ISO8601" }
         created_at: { $ref: "#/components/schemas/ISO8601" }
         updated_at: { $ref: "#/components/schemas/ISO8601" }

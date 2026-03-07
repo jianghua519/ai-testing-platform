@@ -10,6 +10,14 @@
 - `packages/dsl-compiler`：DSL 编译器骨架
 - `packages/playwright-adapter`：Playwright 执行适配层与 step 执行引擎
 
+当前已经支持的关键运行能力：
+
+- agent `max_parallel_slots` 并发槽位
+- run 级 `pause / resume / cancel`
+- step 边界控制决策和 step 级结果回传
+- runner `screenshot / trace / video` 真采集
+- artifact 落库和按 `run` / `run_item` 查询
+
 优先阅读：
 
 - `docs/README.md`：文档地图、治理规则、模板和自动化入口
@@ -36,8 +44,8 @@
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
 - `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
-- `npm run smoke:control-plane:compose`：在容器化本地栈中验证 migration、分页读模型和 `run_id` 级 step events 查询
-- `npm run smoke:scheduler:compose`：在容器化本地栈中验证 `control-plane -> agent -> real Playwright worker -> runner-results -> PostgreSQL` 调度闭环，并验证 capability 匹配
+- `npm run smoke:control-plane:compose`：在容器化本地栈中验证 migration、分页读模型、runtime 表和 `run_id` 级 step events 查询
+- `npm run smoke:scheduler:compose`：在容器化本地栈中验证 `control-plane -> agent -> real Playwright worker -> runner-results -> PostgreSQL` 调度闭环，并验证并发槽位、`pause / resume / cancel` 和 `screenshot / trace / video`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`
@@ -48,11 +56,16 @@
 - `GET /api/v1/run-items?run_id=...&limit=...&cursor=...`
 - `GET /api/v1/internal/runs/{run_id}/step-events?limit=...&cursor=...`
 - `GET /api/v1/internal/run-items/{run_item_id}/step-events?limit=...&cursor=...`
+- `GET /api/v1/internal/runs/{run_id}/artifacts?limit=...&cursor=...`
+- `GET /api/v1/internal/run-items/{run_item_id}/artifacts?limit=...&cursor=...`
 - `GET /api/v1/internal/migrations`
 
 当前控制面内部调度接口：
 
 - `POST /api/v1/internal/runs:enqueue-web`
+- `POST /api/v1/internal/runs/{run_id}:pause`
+- `POST /api/v1/internal/runs/{run_id}:resume`
+- `POST /api/v1/runs/{run_id}:cancel`
 - `POST /api/v1/internal/agents:register`
 - `POST /api/v1/internal/agents/{agent_id}:heartbeat`
 - `POST /api/v1/internal/agents/{agent_id}:acquire-lease`
@@ -67,10 +80,12 @@ agent 运行约定：
 - `WEB_AGENT_SUPPORTED_JOB_KINDS` 控制 job kind 过滤
 - `WEB_AGENT_BROWSERS` 生成 `browser:<name>` capability，默认是 `chromium`
 - `WEB_AGENT_CAPABILITIES` 可显式补充额外 capability
+- `WEB_AGENT_MAX_PARALLEL_SLOTS` 控制单 agent 的并发领取槽位，默认是 `1`
 
 容器化本地栈：
 
-- `docker compose build`
+- `docker compose build tools control-plane`
+- `docker compose down -v`
 - `docker compose up -d postgres --wait`
 - `docker compose run --rm tools npm run control-plane:migrate:postgres`
 - `docker compose up -d control-plane --wait`

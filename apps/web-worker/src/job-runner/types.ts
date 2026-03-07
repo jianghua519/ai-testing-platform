@@ -27,7 +27,7 @@ export interface JobMetadata {
 
 export interface WebWorkerResult {
   metadata: JobMetadata;
-  status: 'compiled' | 'executed' | 'compile_failed' | 'execution_failed';
+  status: 'compiled' | 'executed' | 'compile_failed' | 'execution_failed' | 'canceled';
   issues: CompileIssue[];
   planResult?: PlanExecutionResult;
 }

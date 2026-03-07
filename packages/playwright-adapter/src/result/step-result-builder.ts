@@ -54,3 +54,18 @@ export const buildSkippedStepResult = (step: CompiledStep, session: ExecutionSes
     errorMessage: reason,
   });
 };
+
+export const buildCanceledStepResult = (step: CompiledStep, session: ExecutionSession, reason: string): StepResult => {
+  const startedAt = session.clock.now();
+  const finishedAt = session.clock.now();
+  return buildStepResult({
+    step,
+    session,
+    startedAt,
+    finishedAt,
+    status: 'canceled',
+    attempts: 0,
+    errorCode: 'PW_STEP_CANCELED',
+    errorMessage: reason,
+  });
+};

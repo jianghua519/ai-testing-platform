@@ -17,7 +17,10 @@ export interface RuntimeVariableStore {
 }
 
 export interface ArtifactCollector {
-  collectForStep(stepId: string): Promise<ArtifactReference[]>;
+  beforeStep(step: CompiledStep, session: ExecutionSession): Promise<void>;
+  collectForStep(step: CompiledStep, stepResult: StepResult, session: ExecutionSession): Promise<ArtifactReference[]>;
+  finalizePlan(plan: CompiledWebPlan, planResult: PlanExecutionResult, session: ExecutionSession): Promise<ArtifactReference[]>;
+  finalizeAfterContextClose(plan: CompiledWebPlan, planResult: PlanExecutionResult, session: ExecutionSession): Promise<ArtifactReference[]>;
 }
 
 export interface ExecutionClock {
@@ -25,7 +28,7 @@ export interface ExecutionClock {
 }
 
 export interface StepControlDecision {
-  action: 'execute' | 'skip';
+  action: 'execute' | 'skip' | 'cancel';
   replacementStep?: CompiledStep;
   reason?: string;
 }
@@ -53,6 +56,7 @@ export interface ExecutionSession {
 export interface StepExecutionOutput {
   stepResult: StepResult;
   childResults: StepResult[];
+  haltPlan?: 'canceled';
 }
 
 export interface PlanExecutionOutput {
