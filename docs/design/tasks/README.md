@@ -74,4 +74,6 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 
 - `2026-03-07`: `docs/design/tasks/20260307-191725-control-plane-post-api-v1-runs-design-task.md` - control-plane 公开 POST /api/v1/runs
 
+- `2026-03-07`: `docs/design/tasks/20260307-211047-test-asset-domain-model-design-task.md` - 测试资产领域模型与版本化执行
+
 - `2026-03-07`: `docs/design/tasks/20260307-221500-recording-capability-gap-design-task.md` - 录屏到报告能力调研与 GAP 分析
