@@ -7,9 +7,12 @@
   ],
   "scripts": {
     "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter apps/web-worker apps/control-plane",
-    "build": "npm run typecheck"
+    "build": "npm run typecheck",
+    "playwright:install": "playwright install chromium",
+    "smoke:web:real": "npm run build && node ./scripts/run_real_browser_smoke.mjs"
   },
   "devDependencies": {
+    "playwright": "1.58.2",
     "typescript": "^5.9.2",
     "@types/node": "^24.5.2"
   }
