@@ -837,12 +837,36 @@ components:
           type: string
           enum: [standard, intelligent]
         selection:
-          type: object
-          description: Defines what to execute (cases/suites/plans).
-          additionalProperties: true
+          $ref: "#/components/schemas/RunSelection"
         execution_policy:
+          $ref: "#/components/schemas/RunExecutionPolicy"
+    RunSelection:
+      type: object
+      required: [kind, plan, env_profile]
+      properties:
+        kind:
+          type: string
+          enum: [inline_web_plan]
+        plan:
+          type: object
+          description: Source web plan draft passed through to enqueue.
+          additionalProperties: true
+        env_profile:
+          type: object
+          description: Env profile passed through to enqueue.
+          additionalProperties: true
+    RunExecutionPolicy:
+      type: object
+      properties:
+        required_capabilities:
+          type: array
+          items: { type: string, minLength: 1 }
+        variable_context:
           type: object
           additionalProperties: true
+        trace_id: { type: string }
+        correlation_id: { type: string }
+      additionalProperties: true
     Run:
       type: object
       required: [id, tenant_id, project_id, status, created_at]

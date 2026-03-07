@@ -154,6 +154,44 @@ try {
     subjectId,
     memberships: [{ projectId: scopedFixture.projectId, roles: ['qa', 'operator'] }],
   });
+  const publicRunCreateResponse = await postJson(
+    `${baseUrl}/api/v1/runs`,
+    {
+      tenant_id: scopedFixture.tenantId,
+      project_id: scopedFixture.projectId,
+      name: 'public-api-run',
+      mode: 'standard',
+      selection: {
+        kind: 'inline_web_plan',
+        plan: scopedFixture.plan,
+        env_profile: scopedFixture.envProfile,
+      },
+      execution_policy: {
+        required_capabilities: ['web', 'browser:chromium'],
+        variable_context: { source: 'compose-public-create' },
+        trace_id: 'trace-public-create',
+        correlation_id: 'corr-public-create',
+      },
+    },
+    authHeaders,
+  );
+  const forbiddenCreateResponse = await postJson(
+    `${baseUrl}/api/v1/runs`,
+    {
+      tenant_id: scopedFixture.tenantId,
+      project_id: randomUUID(),
+      name: 'forbidden-public-api-run',
+      mode: 'standard',
+      selection: {
+        kind: 'inline_web_plan',
+        plan: scopedFixture.plan,
+        env_profile: scopedFixture.envProfile,
+      },
+    },
+    authHeaders,
+  );
+  const publicRunId = publicRunCreateResponse.body?.id;
+  assertOk(typeof publicRunId === 'string', 'expected public run creation to return a run id');
 
   const overrideResponse = await postJson(
     `${baseUrl}/api/v1/internal/jobs/${scenarios[0].jobId}/steps/${secondStep.sourceStepId}:override`,
@@ -300,6 +338,8 @@ try {
     health,
     migrationsPage,
     runsPage1,
+    publicRunPage,
+    publicRunItemsPage,
     runStepEventsPage1,
     runItemPage1,
     runItemStepEventsPage,
@@ -309,6 +349,8 @@ try {
     getJson(`${baseUrl}/healthz`),
     getJson(`${baseUrl}/api/v1/internal/migrations`),
     getJson(`${baseUrl}/api/v1/runs?tenant_id=${scenarios[0].tenantId}&project_id=${scenarios[0].projectId}&limit=2`, authHeaders),
+    getJson(`${baseUrl}/api/v1/runs/${publicRunId}`, authHeaders),
+    getJson(`${baseUrl}/api/v1/run-items?run_id=${publicRunId}&limit=10`, authHeaders),
     getJson(`${baseUrl}/api/v1/internal/runs/${scenarios[0].runId}/step-events?limit=2`),
     getJson(`${baseUrl}/api/v1/run-items?run_id=${scenarios[0].runId}&limit=2`, authHeaders),
     getJson(`${baseUrl}/api/v1/internal/run-items/${scenarios[0].runItemId}/step-events?limit=1`),
@@ -359,13 +401,18 @@ try {
   ]);
 
   assertOk(health.status === 200 && health.body.status === 'ok', 'healthz failed');
+  assertOk(publicRunCreateResponse.status === 201, `public run create expected 201, got ${publicRunCreateResponse.status}`);
+  assertOk(publicRunPage.status === 200 && publicRunPage.body.id === publicRunId, 'expected public run GET to return created run');
+  assertOk(publicRunItemsPage.status === 200 && publicRunItemsPage.body.items.length === 1, 'expected public run to have exactly one run item');
+  assertOk(publicRunItemsPage.body.items[0]?.summary?.required_capabilities?.includes('browser:chromium'), 'expected public run item required capabilities to include browser:chromium');
+  assertOk(forbiddenCreateResponse.status === 403, `forbidden project create expected 403, got ${forbiddenCreateResponse.status}`);
   assertOk(overrideResponse.status === 202, `override expected 202, got ${overrideResponse.status}`);
   assertOk(decisionResponse.status === 200 && decisionResponse.body.action === 'replace', 'step decision did not return replace');
   assertOk(firstPost.status === 202, `first step post expected 202, got ${firstPost.status}`);
   assertOk(duplicatePost.status === 200 && duplicatePost.body?.duplicate === true, 'duplicate event was not deduplicated');
   assertOk(migrationsPage.body.items.length === 7, `expected 7 migrations, got ${migrationsPage.body.items.length}`);
   assertOk(runsPage1.body.items.length === 2 && runsPage1.body.next_cursor, 'runs page 1 pagination failed');
-  assertOk(runsPage2.body.items.length === 1, 'runs page 2 expected 1 item');
+  assertOk(runsPage2.body.items.length === 2, 'runs page 2 expected 2 items');
   assertOk(runItemPage1.body.items.length === 2 && runItemPage1.body.next_cursor, 'run items page 1 pagination failed');
   assertOk(runItemsPage2.body.items.length === 1, 'run items page 2 expected 1 item');
   assertOk(runStepEventsPage1.body.items.length === 2 && runStepEventsPage1.body.next_cursor, 'run step events page 1 pagination failed');
@@ -380,6 +427,16 @@ try {
     health: health.body,
     databaseSummary: databaseSummary.rows[0],
     migrations: migrationsPage.body.items.map((item) => item.version),
+    publicRunCreate: {
+      status: publicRunCreateResponse.status,
+      runId: publicRunId,
+      runStatus: publicRunCreateResponse.body?.status,
+      runItemCount: publicRunItemsPage.body.items.length,
+    },
+    forbiddenPublicRunCreate: {
+      status: forbiddenCreateResponse.status,
+      errorCode: forbiddenCreateResponse.body?.error?.code,
+    },
     runsPageSizes: [runsPage1.body.items.length, runsPage2.body.items.length],
     runsPageIds: {
       page1: runsPage1.body.items.map((item) => item.id),

@@ -58,6 +58,8 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 const isString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
 const isPositiveInteger = (value: unknown): value is number => Number.isInteger(value) && Number(value) > 0;
+const isRunMode = (value: unknown): value is 'standard' | 'intelligent' =>
+  value === 'standard' || value === 'intelligent';
 
 const isRunnerResultEnvelope = (value: unknown): value is RunnerResultEnvelope =>
   isObject(value) && typeof value.event_type === 'string' && isObject(value.payload) && typeof value.payload.job_id === 'string';
@@ -75,6 +77,22 @@ const isStepOverrideRequest = (value: unknown): value is StepOverrideRequest =>
 
 const isArtifactDownloadMode = (value: string): value is ArtifactDownloadMode =>
   value === 'redirect' || value === 'stream';
+
+const isInlineWebRunSelection = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && value.kind === 'inline_web_plan'
+  && isObject(value.plan)
+  && isObject(value.envProfile ?? value.env_profile);
+
+const isRunCreateRequest = (value: unknown): value is Record<string, unknown> =>
+  isObject(value)
+  && isString(value.tenant_id)
+  && isString(value.project_id)
+  && isString(value.name)
+  && isRunMode(value.mode)
+  && isInlineWebRunSelection(value.selection)
+  && ((value.execution_policy === undefined)
+    || isObject(value.execution_policy));
 
 const isEnqueueWebRunRequest = (value: unknown): value is ControlPlaneEnqueueWebRunInput =>
   isObject(value)
@@ -135,6 +153,36 @@ const normalizeEnqueueWebRun = (value: Record<string, unknown>): ControlPlaneEnq
   traceId: typeof value.traceId === 'string' ? value.traceId : typeof value.trace_id === 'string' ? value.trace_id : undefined,
   correlationId: typeof value.correlationId === 'string' ? value.correlationId : typeof value.correlation_id === 'string' ? value.correlation_id : undefined,
 });
+
+const normalizeRunCreateRequest = (value: Record<string, unknown>): ControlPlaneEnqueueWebRunInput => {
+  const selection = value.selection as Record<string, unknown>;
+  const executionPolicy = isObject(value.execution_policy) ? value.execution_policy : {};
+
+  return {
+    tenantId: String(value.tenant_id),
+    projectId: String(value.project_id),
+    name: String(value.name),
+    mode: String(value.mode),
+    plan: selection.plan as ControlPlaneEnqueueWebRunInput['plan'],
+    envProfile: (selection.envProfile ?? selection.env_profile) as ControlPlaneEnqueueWebRunInput['envProfile'],
+    requiredCapabilities: isStringArray(executionPolicy.requiredCapabilities ?? executionPolicy.required_capabilities)
+      ? [...(executionPolicy.requiredCapabilities ?? executionPolicy.required_capabilities) as string[]]
+      : undefined,
+    variableContext: isObject(executionPolicy.variableContext ?? executionPolicy.variable_context)
+      ? (executionPolicy.variableContext ?? executionPolicy.variable_context) as Record<string, unknown>
+      : undefined,
+    traceId: typeof executionPolicy.traceId === 'string'
+      ? executionPolicy.traceId
+      : typeof executionPolicy.trace_id === 'string'
+        ? executionPolicy.trace_id
+        : undefined,
+    correlationId: typeof executionPolicy.correlationId === 'string'
+      ? executionPolicy.correlationId
+      : typeof executionPolicy.correlation_id === 'string'
+        ? executionPolicy.correlation_id
+        : undefined,
+  };
+};
 
 const normalizeRegisterAgent = (value: Record<string, unknown>): ControlPlaneRegisterAgentInput => ({
   agentId: String(value.agentId ?? value.agent_id),
@@ -456,6 +504,43 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         }
 
         json(response, 200, toApiPrincipal(principal));
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/v1/runs') {
+        const principal = await authenticatePrincipal(request, response);
+        if (!principal) {
+          return;
+        }
+        if (!store.enqueueWebRun) {
+          notSupported(response, 'create run');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isRunCreateRequest(body)) {
+          json(response, 400, {
+            error: {
+              code: 'INVALID_RUN_CREATE_REQUEST',
+              message: 'tenant_id, project_id, name, mode and selection.kind=inline_web_plan with plan/env_profile are required',
+              trace_id: 'local',
+            },
+          });
+          return;
+        }
+
+        const input = normalizeRunCreateRequest(body as Record<string, unknown>);
+        if (input.tenantId !== principal.tenantId) {
+          forbidden(response, 'TENANT_SCOPE_MISMATCH', 'tenant_id must match authenticated principal');
+          return;
+        }
+        if (!canAccessProject(principal, input.projectId)) {
+          forbidden(response, 'PROJECT_ACCESS_DENIED', 'project_id is not granted to the principal');
+          return;
+        }
+
+        const queued = await store.enqueueWebRun(input);
+        json(response, 201, toApiRun(queued.run));
         return;
       }
 

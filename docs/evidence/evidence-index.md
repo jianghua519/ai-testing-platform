@@ -67,3 +67,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-150657-artifact-object-storage-retention-evidence.md` - artifact 对象存储、下载与保留策略 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-173247-control-plane-tenant-schema-token-evidence.md` - control-plane tenant schema隔离与token租户上下文 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-191725-control-plane-post-api-v1-runs-evidence.md` - control-plane 公开 POST /api/v1/runs 的测试举证记录。
