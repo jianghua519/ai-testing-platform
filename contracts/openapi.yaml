@@ -16,6 +16,7 @@ tags:
   - name: Reports
   - name: IAM
   - name: Agents
+  - name: Internal
 paths:
   /healthz:
     get:
@@ -216,6 +217,83 @@ paths:
         "204":
           description: No control override, execute original step
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/runner-results:
+    post:
+      tags: [Internal]
+      summary: Accept runner result envelopes over HTTP bridge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunnerResultEnvelopeBridge"
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/internal/jobs/{job_id}/steps/{source_step_id}:override:
+    post:
+      tags: [Internal]
+      summary: Queue a remote control override for a future step execution
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+        - in: path
+          name: source_step_id
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerStepControlDecision"
+      responses:
+        "202":
+          description: Accepted
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted: { type: boolean, const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/internal/jobs/{job_id}/events:
+    get:
+      tags: [Internal]
+      summary: List ingested runner events for a job
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobEventListResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -557,3 +635,16 @@ components:
         resume_after_ms:
           type: integer
           minimum: 0
+    RunnerResultEnvelopeBridge:
+      type: object
+      description: HTTP bridge payload carrying a raw AsyncAPI-compatible runner result envelope.
+      additionalProperties: true
+    JobEventListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true

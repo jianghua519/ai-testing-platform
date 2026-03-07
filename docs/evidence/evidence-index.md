@@ -39,3 +39,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-085850-step-evidence.md` - step级执行控制与回传 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-091146-step-evidence.md` - 远程step控制协议 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-092221-control-plane-api-evidence.md` - control-plane API接入 的测试举证记录。

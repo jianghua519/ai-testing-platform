@@ -43,3 +43,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-085850-step-design-task.md` - step级执行控制与回传
 
 - `2026-03-07`: `docs/design/tasks/20260307-091146-step-design-task.md` - 远程step控制协议
+
+- `2026-03-07`: `docs/design/tasks/20260307-092221-control-plane-api-design-task.md` - control-plane API接入
