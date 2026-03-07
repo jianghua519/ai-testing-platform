@@ -77,3 +77,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-211047-test-asset-domain-model-design-task.md` - 测试资产领域模型与版本化执行
 
 - `2026-03-07`: `docs/design/tasks/20260307-221500-recording-capability-gap-design-task.md` - 录屏到报告能力调研与 GAP 分析
+
+- `2026-03-07`: `docs/design/tasks/20260307-235950-langgraph-ai-orchestrator-design-task.md` - LangGraph 驱动的 AI 测试编排与对话助手设计
