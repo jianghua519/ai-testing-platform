@@ -1,5 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
+import { pipeline } from 'node:stream/promises';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type {
@@ -26,6 +27,7 @@ import type {
 import type { StepControlRequest, StepControlResponse } from '@aiwtp/web-worker';
 import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js';
 import { PaginationError, parseLimit } from './pagination.js';
+import { createArtifactBlobStoreFromEnv, type ArtifactDownloadMode } from './artifact-blob-store.js';
 
 const json = (response: ServerResponse, status: number, payload?: unknown): void => {
   if (payload === undefined) {
@@ -68,6 +70,9 @@ const isStepControlRequest = (value: unknown): value is StepControlRequest =>
 const isStepOverrideRequest = (value: unknown): value is StepOverrideRequest =>
   isObject(value)
   && typeof value.action === 'string';
+
+const isArtifactDownloadMode = (value: string): value is ArtifactDownloadMode =>
+  value === 'redirect' || value === 'stream';
 
 const isEnqueueWebRunRequest = (value: unknown): value is ControlPlaneEnqueueWebRunInput =>
   isObject(value)
@@ -295,6 +300,7 @@ const toApiArtifact = (artifact: ControlPlaneArtifactRecord) => ({
   size_bytes: artifact.sizeBytes,
   sha256: artifact.sha256,
   metadata: artifact.metadata,
+  retention_expires_at: artifact.retentionExpiresAt,
   created_at: artifact.createdAt,
 });
 
@@ -336,6 +342,23 @@ const notSupported = (response: ServerResponse, capability: string): void => {
   });
 };
 
+const isArtifactMissingError = (error: unknown): boolean => {
+  if (!isObject(error)) {
+    return false;
+  }
+
+  const name = typeof error.name === 'string' ? error.name : '';
+  const message = typeof error.message === 'string' ? error.message : '';
+  const statusCode = isObject(error.$metadata) && typeof error.$metadata.httpStatusCode === 'number'
+    ? error.$metadata.httpStatusCode
+    : undefined;
+
+  return name === 'NoSuchKey'
+    || name === 'NotFound'
+    || message.includes('ENOENT')
+    || statusCode === 404;
+};
+
 export interface StartControlPlaneServerOptions {
   port?: number;
   hostname?: string;
@@ -349,6 +372,7 @@ export interface StartedControlPlaneServer extends ControlPlaneServer {
 export const startControlPlaneServer = async (options: StartControlPlaneServerOptions = {}): Promise<StartedControlPlaneServer> => {
   const store = options.store ?? (await createControlPlaneStoreFromEnv());
   const hostname = options.hostname ?? '127.0.0.1';
+  const artifactBlobStore = createArtifactBlobStoreFromEnv();
 
   const server = http.createServer(async (request, response) => {
     try {
@@ -666,6 +690,52 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         });
         json(response, 200, toPaginatedPayload(page, toApiArtifact));
         return;
+      }
+
+      const artifactDownloadMatch = matchPath(pathname, /^\/api\/v1\/internal\/artifacts\/([^/]+)\/download$/);
+      if (method === 'GET' && artifactDownloadMatch) {
+        if (!store.getArtifact) {
+          notSupported(response, 'download artifact');
+          return;
+        }
+
+        const [, artifactId] = artifactDownloadMatch;
+        const modeValue = url.searchParams.get('mode') ?? 'redirect';
+        if (!isArtifactDownloadMode(modeValue)) {
+          json(response, 400, { error: { code: 'INVALID_ARTIFACT_DOWNLOAD_MODE', message: 'mode must be redirect or stream', trace_id: 'local' } });
+          return;
+        }
+
+        const artifact = await store.getArtifact(artifactId);
+        if (!artifact) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'artifact not found', trace_id: 'local' } });
+          return;
+        }
+
+        try {
+          const descriptor = await artifactBlobStore.openDownload(artifact, modeValue);
+          if (descriptor.kind === 'redirect') {
+            response.writeHead(302, { location: descriptor.location ?? '' });
+            response.end();
+            return;
+          }
+
+          response.writeHead(200, {
+            'content-type': descriptor.contentType ?? 'application/octet-stream',
+            'content-disposition': `attachment; filename="${descriptor.filename}"`,
+            ...(descriptor.contentLength !== null && descriptor.contentLength !== undefined
+              ? { 'content-length': String(descriptor.contentLength) }
+              : {}),
+          });
+          await pipeline(descriptor.body!, response);
+          return;
+        } catch (error) {
+          if (isArtifactMissingError(error)) {
+            json(response, 404, { error: { code: 'ARTIFACT_BLOB_NOT_FOUND', message: 'artifact blob not found', trace_id: 'local' } });
+            return;
+          }
+          throw error;
+        }
       }
 
       const runMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+)$/);

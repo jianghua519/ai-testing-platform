@@ -1,6 +1,6 @@
 # AI Web Testing Platform V2
 
-这个仓库当前已经从纯规范仓库推进到“control-plane + agent + worker + PostgreSQL”最小调度系统原型，并且容器化调度 smoke 已经能真实拉起 Playwright Chromium。
+这个仓库当前已经从纯规范仓库推进到“control-plane + agent + worker + PostgreSQL + S3 兼容对象存储”最小调度系统原型，并且容器化调度 smoke 已经能真实拉起 Playwright Chromium 与 artifact 对象存储闭环。
 
 当前代码骨架：
 
@@ -16,7 +16,8 @@
 - run 级 `pause / resume / cancel`
 - step 边界控制决策和 step 级结果回传
 - runner `screenshot / trace / video` 真采集
-- artifact 落库和按 `run` / `run_item` 查询
+- artifact 上传到对象存储、落库、按 `run` / `run_item` 查询
+- artifact 下载接口和保留期清理
 
 优先阅读：
 
@@ -38,6 +39,7 @@
 - `npm install`
 - `npm run typecheck`
 - `npm run control-plane:serve`
+- `npm run control-plane:artifacts:prune`
 - `npm run control-plane:migrate:postgres`
 - `npm run worker:agent`
 - `npm run playwright:install`
@@ -58,6 +60,7 @@
 - `GET /api/v1/internal/run-items/{run_item_id}/step-events?limit=...&cursor=...`
 - `GET /api/v1/internal/runs/{run_id}/artifacts?limit=...&cursor=...`
 - `GET /api/v1/internal/run-items/{run_item_id}/artifacts?limit=...&cursor=...`
+- `GET /api/v1/internal/artifacts/{artifact_id}/download?mode=redirect|stream`
 - `GET /api/v1/internal/migrations`
 
 当前控制面内部调度接口：
@@ -82,13 +85,22 @@ agent 运行约定：
 - `WEB_AGENT_CAPABILITIES` 可显式补充额外 capability
 - `WEB_AGENT_MAX_PARALLEL_SLOTS` 控制单 agent 的并发领取槽位，默认是 `1`
 
+artifact 存储约定：
+
+- `ARTIFACT_STORAGE_MODE` 控制 artifact 落地后端，当前支持 `filesystem` 和 `s3`
+- `ARTIFACT_S3_ENDPOINT`、`ARTIFACT_S3_BUCKET`、`ARTIFACT_S3_ACCESS_KEY_ID`、`ARTIFACT_S3_SECRET_ACCESS_KEY` 控制 S3 兼容对象存储接入
+- `ARTIFACT_S3_PUBLIC_ENDPOINT` 用于生成外部可访问的预签名下载地址
+- `ARTIFACT_RETENTION_DAYS_DEFAULT` 和按 artifact 类型拆分的 `ARTIFACT_RETENTION_DAYS_*` 控制保留期
+- `ARTIFACT_DOWNLOAD_SIGNED_URL_TTL_SECONDS` 控制下载重定向签名有效期
+
 容器化本地栈：
 
 - `docker compose build tools control-plane`
 - `docker compose down -v`
-- `docker compose up -d postgres --wait`
+- `docker compose up -d postgres minio --wait`
 - `docker compose run --rm tools npm run control-plane:migrate:postgres`
 - `docker compose up -d control-plane --wait`
 - `docker compose run --rm tools npm run smoke:control-plane:compose`
 - `docker compose run --rm tools npm run smoke:scheduler:compose`
+- `docker compose run --rm tools npm run control-plane:artifacts:prune`
 - `docker compose down -v`

@@ -259,8 +259,8 @@ try {
 
   await pool.query(
     `insert into artifacts (
-       artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id, artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json
-     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{"source":"compose-smoke"}'::jsonb)
+       artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id, artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at
+     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, '{"source":"compose-smoke"}'::jsonb, $13)
      on conflict (artifact_id) do nothing`,
     [
       artifactId,
@@ -275,6 +275,7 @@ try {
       'image/png',
       1024,
       'deadbeef',
+      '2026-03-14T00:00:00.000Z',
     ],
   );
 
@@ -285,6 +286,7 @@ try {
     runStepEventsPage1,
     runItemPage1,
     runItemStepEventsPage,
+    runArtifactsPage,
     jobEvents,
   ] = await Promise.all([
     getJson(`${baseUrl}/healthz`),
@@ -293,6 +295,7 @@ try {
     getJson(`${baseUrl}/api/v1/internal/runs/${scenarios[0].runId}/step-events?limit=2`),
     getJson(`${baseUrl}/api/v1/run-items?run_id=${scenarios[0].runId}&limit=2`),
     getJson(`${baseUrl}/api/v1/internal/run-items/${scenarios[0].runItemId}/step-events?limit=1`),
+    getJson(`${baseUrl}/api/v1/internal/runs/${scenarios[0].runId}/artifacts?limit=5`),
     getJson(`${baseUrl}/api/v1/internal/jobs/${scenarios[0].jobId}/events`),
   ]);
 
@@ -340,7 +343,7 @@ try {
   assertOk(decisionResponse.status === 200 && decisionResponse.body.action === 'replace', 'step decision did not return replace');
   assertOk(firstPost.status === 202, `first step post expected 202, got ${firstPost.status}`);
   assertOk(duplicatePost.status === 200 && duplicatePost.body?.duplicate === true, 'duplicate event was not deduplicated');
-  assertOk(migrationsPage.body.items.length === 5, `expected 5 migrations, got ${migrationsPage.body.items.length}`);
+  assertOk(migrationsPage.body.items.length === 6, `expected 6 migrations, got ${migrationsPage.body.items.length}`);
   assertOk(runsPage1.body.items.length === 2 && runsPage1.body.next_cursor, 'runs page 1 pagination failed');
   assertOk(runsPage2.body.items.length === 1, 'runs page 2 expected 1 item');
   assertOk(runItemPage1.body.items.length === 2 && runItemPage1.body.next_cursor, 'run items page 1 pagination failed');
@@ -348,6 +351,8 @@ try {
   assertOk(runStepEventsPage1.body.items.length === 2 && runStepEventsPage1.body.next_cursor, 'run step events page 1 pagination failed');
   assertOk(runStepEventsPage2.body.items.length === 1, 'run step events page 2 expected 1 item');
   assertOk(runItemStepEventsPage.body.items.length === 1, 'run item step events expected 1 item');
+  assertOk(runArtifactsPage.body.items.length === 1, 'run artifacts expected 1 item');
+  assertOk(runArtifactsPage.body.items[0]?.retention_expires_at === '2026-03-14T00:00:00.000Z', 'expected artifact retention_expires_at to round-trip');
   assertOk(jobEvents.body.items.length === 2, `job events expected 2 items, got ${jobEvents.body.items.length}`);
   assertOk(tableRows.rows.length === 3, `expected 3 runtime extension tables, got ${tableRows.rows.length}`);
 
@@ -371,6 +376,8 @@ try {
       page2: runStepEventsPage2.body.items.map((item) => item.source_step_id),
     },
     runItemStepEventIds: runItemStepEventsPage.body.items.map((item) => item.source_step_id),
+    runArtifactIds: runArtifactsPage.body.items.map((item) => item.artifact_id),
+    runArtifactRetentions: runArtifactsPage.body.items.map((item) => item.retention_expires_at),
     duplicateBody: duplicatePost.body,
     jobEventTypes: jobEvents.body.items.map((item) => item.envelope.event_type),
     domainCounts: domainCounts.rows[0],

@@ -12,6 +12,7 @@
     "@aiwtp/dsl-compiler": "0.1.0",
     "@aiwtp/playwright-adapter": "0.1.0",
     "@aiwtp/web-dsl-schema": "0.1.0",
+    "@aws-sdk/client-s3": "^3.1004.0",
     "playwright-core": "1.58.2"
   }
 }

@@ -12,6 +12,7 @@ import type {
   ControlPlaneJobLeaseRecord,
   ControlPlaneAgentRecord,
   ControlPlaneListArtifactsQuery,
+  ControlPlaneListExpiredArtifactsQuery,
   ControlPlaneListRunItemsQuery,
   ControlPlaneListRunsQuery,
   ControlPlaneListStepEventsQuery,
@@ -190,6 +191,7 @@ interface ArtifactRow {
   size_bytes: number | null;
   sha256: string | null;
   metadata_json: Record<string, unknown> | string;
+  retention_expires_at: string | null;
   created_at: string;
 }
 
@@ -228,11 +230,25 @@ const parseJsonColumn = <T>(value: T | string | null): T | null => {
   return typeof value === 'string' ? JSON.parse(value) as T : value;
 };
 
+const isObjectRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+
 const isArtifactReference = (value: unknown): value is ArtifactReference =>
   typeof value === 'object'
   && value !== null
   && typeof (value as ArtifactReference).kind === 'string'
   && typeof (value as ArtifactReference).uri === 'string';
+
+const resolveArtifactRetentionExpiresAt = (artifact: ArtifactReference): string | null => {
+  if (typeof artifact.retentionExpiresAt === 'string' && artifact.retentionExpiresAt.length > 0) {
+    return artifact.retentionExpiresAt;
+  }
+
+  if (isObjectRecord(artifact.metadata) && typeof artifact.metadata.retention_expires_at === 'string') {
+    return artifact.metadata.retention_expires_at;
+  }
+
+  return null;
+};
 
 const isStepResultEnvelope = (envelope: RunnerResultEnvelope): envelope is StepResultReportedEnvelope =>
   envelope.event_type === 'step.result_reported';
@@ -415,6 +431,7 @@ const mapArtifact = (row: ArtifactRow): ControlPlaneArtifactRecord => ({
   sizeBytes: row.size_bytes,
   sha256: row.sha256,
   metadata: parseJsonColumn<Record<string, unknown>>(row.metadata_json) ?? {},
+  retentionExpiresAt: row.retention_expires_at,
   createdAt: row.created_at,
 });
 
@@ -1481,7 +1498,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [runId];
     let sql = `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
-                      artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, created_at
+                      artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
        from artifacts
        where run_id = $1`;
 
@@ -1507,7 +1524,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [runItemId];
     let sql = `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
-                      artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, created_at
+                      artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
        from artifacts
        where run_item_id = $1`;
 
@@ -1527,6 +1544,47 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       primary: artifact.createdAt,
       secondary: artifact.artifactId,
     }));
+  }
+
+  async getArtifact(artifactId: string): Promise<ControlPlaneArtifactRecord | undefined> {
+    const result = await this.pool.query<ArtifactRow>(
+      `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
+              artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
+       from artifacts
+       where artifact_id = $1
+       limit 1`,
+      [artifactId],
+    );
+    const row = result.rows[0];
+    return row ? mapArtifact(row) : undefined;
+  }
+
+  async listExpiredArtifacts(query: ControlPlaneListExpiredArtifactsQuery): Promise<ControlPlaneArtifactRecord[]> {
+    const expiresBefore = query.expiresBefore ?? new Date().toISOString();
+    const result = await this.pool.query<ArtifactRow>(
+      `select artifact_id, tenant_id, project_id, run_id, run_item_id, step_event_id, job_id,
+              artifact_type, storage_uri, content_type, size_bytes, sha256, metadata_json, retention_expires_at, created_at
+       from artifacts
+       where retention_expires_at is not null
+         and retention_expires_at <= $1
+       order by retention_expires_at asc, artifact_id asc
+       limit $2`,
+      [expiresBefore, query.limit],
+    );
+    return result.rows.map(mapArtifact);
+  }
+
+  async deleteArtifacts(artifactIds: string[]): Promise<number> {
+    if (artifactIds.length === 0) {
+      return 0;
+    }
+
+    const result = await this.pool.query(
+      `delete from artifacts
+       where artifact_id = any($1::text[])`,
+      [artifactIds],
+    );
+    return result.rowCount ?? 0;
   }
 
   async snapshot(): Promise<ControlPlaneStateSnapshot> {
@@ -1764,16 +1822,18 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
            content_type,
            size_bytes,
            sha256,
-           metadata_json
+           metadata_json,
+           retention_expires_at
          ) values (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14
          )
          on conflict (artifact_id) do update set
            storage_uri = excluded.storage_uri,
            content_type = excluded.content_type,
            size_bytes = excluded.size_bytes,
            sha256 = excluded.sha256,
-           metadata_json = excluded.metadata_json`,
+           metadata_json = excluded.metadata_json,
+           retention_expires_at = excluded.retention_expires_at`,
         [
           artifact.artifactId ?? randomUUID(),
           context.tenantId,
@@ -1788,6 +1848,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
           artifact.sizeBytes ?? null,
           artifact.sha256 ?? null,
           JSON.stringify(artifact.metadata ?? {}),
+          resolveArtifactRetentionExpiresAt(artifact),
         ],
       );
     }

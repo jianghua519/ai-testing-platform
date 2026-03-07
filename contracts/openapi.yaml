@@ -417,6 +417,30 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/artifacts/{artifact_id}/download:
+    get:
+      tags: [Internal]
+      summary: Download an artifact from object storage or local fallback
+      parameters:
+        - in: path
+          name: artifact_id
+          required: true
+          schema: { type: string, minLength: 1 }
+        - in: query
+          name: mode
+          schema:
+            type: string
+            enum: [redirect, stream]
+            default: redirect
+      responses:
+        "302":
+          description: Redirect to signed object storage URL
+        "200":
+          description: Stream download
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/internal/runs/{run_id}:pause:
     post:
       tags: [Internal]
@@ -861,8 +885,7 @@ components:
         artifacts:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/ArtifactReference"
         summary:
           type: object
           additionalProperties: true
@@ -979,6 +1002,22 @@ components:
           items:
             type: object
             additionalProperties: true
+    ArtifactReference:
+      type: object
+      required: [kind, uri]
+      properties:
+        artifact_id: { type: string, minLength: 1 }
+        kind:
+          type: string
+          enum: [screenshot, trace, video, dom_snapshot, network_capture]
+        uri: { type: string, minLength: 1 }
+        content_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string }
+        retention_expires_at: { $ref: "#/components/schemas/ISO8601" }
+        metadata:
+          type: object
+          additionalProperties: true
     InternalStepEvent:
       type: object
       required:
@@ -1019,8 +1058,7 @@ components:
         artifacts:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/ArtifactReference"
         extracted_variables:
           type: array
           items:
@@ -1063,6 +1101,7 @@ components:
         metadata:
           type: object
           additionalProperties: true
+        retention_expires_at: { $ref: "#/components/schemas/ISO8601" }
         created_at: { $ref: "#/components/schemas/ISO8601" }
     InternalArtifactListResponse:
       type: object

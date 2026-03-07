@@ -1,10 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import type {
   ArtifactCaptureMode,
-  ArtifactPolicy,
   ArtifactReference,
   BrowserProfile,
   CompiledStep,
@@ -15,6 +12,7 @@ import type {
 } from '@aiwtp/web-dsl-schema';
 import type { ArtifactCollector, ExecutionSession } from '@aiwtp/playwright-adapter';
 import type { JobMetadata } from '../job-runner/types.js';
+import { createArtifactStorageFromEnv } from './artifact-storage.js';
 
 interface PlaywrightArtifactCollectorConfig {
   rootDir: string;
@@ -54,33 +52,6 @@ const shouldCapture = (mode: ArtifactCaptureMode, status: StepExecutionStatus | 
   return status === 'failed' || status === 'error' || status === 'canceled';
 };
 
-const hashFile = async (filePath: string): Promise<{ sizeBytes: number; sha256: string }> => {
-  const content = await readFile(filePath);
-  const digest = createHash('sha256').update(content).digest('hex');
-  const fileStat = await stat(filePath);
-  return {
-    sizeBytes: fileStat.size,
-    sha256: digest,
-  };
-};
-
-const toArtifactReference = async (
-  kind: ArtifactReference['kind'],
-  filePath: string,
-  metadata: Record<string, unknown>,
-): Promise<ArtifactReference> => {
-  const { sizeBytes, sha256 } = await hashFile(filePath);
-  return {
-    artifactId: randomUUID(),
-    kind,
-    uri: pathToFileURL(filePath).toString(),
-    contentType: kind === 'screenshot' ? 'image/png' : kind === 'video' ? 'video/webm' : 'application/zip',
-    sizeBytes,
-    sha256,
-    metadata,
-  };
-};
-
 const findMaxVideoPolicy = (steps: CompiledStep[]): ArtifactCaptureMode =>
   flattenSteps(steps).reduce<ArtifactCaptureMode>((current, step) => {
     const mode = step.artifactPolicy.video;
@@ -99,6 +70,7 @@ export class PlaywrightArtifactCollector implements ArtifactCollector {
   private readonly videoDir: string;
   private readonly videoStagingDir: string;
   private readonly planVideoMode: ArtifactCaptureMode;
+  private readonly storage: ReturnType<typeof createArtifactStorageFromEnv>;
   private traceStarted = false;
   private activeTraceStepId?: string;
 
@@ -108,6 +80,7 @@ export class PlaywrightArtifactCollector implements ArtifactCollector {
     this.videoDir = path.join(config.rootDir, 'videos');
     this.videoStagingDir = path.join(config.rootDir, 'video-staging');
     this.planVideoMode = findMaxVideoPolicy(config.plan.compiledSteps);
+    this.storage = createArtifactStorageFromEnv(config.rootDir, config.metadata);
   }
 
   buildContextOptions(profile: BrowserProfile): ArtifactCaptureSetup['contextOptions'] {
@@ -196,11 +169,16 @@ export class PlaywrightArtifactCollector implements ArtifactCollector {
     );
     await video.saveAs(targetPath);
     return [
-      await toArtifactReference('video', targetPath, {
-        scope: 'plan',
-        plan_id: this.config.plan.compiledPlanId,
-        run_id: this.config.metadata.runId,
-        run_item_id: this.config.metadata.runItemId,
+      await this.storage.persistArtifact({
+        kind: 'video',
+        filePath: targetPath,
+        contentType: 'video/webm',
+        metadata: {
+          scope: 'plan',
+          plan_id: this.config.plan.compiledPlanId,
+          run_id: this.config.metadata.runId,
+          run_item_id: this.config.metadata.runItemId,
+        },
       }),
     ];
   }
@@ -221,10 +199,15 @@ export class PlaywrightArtifactCollector implements ArtifactCollector {
         `${sanitizeSegment(step.sourceStepId)}-${sanitizeSegment(status)}.png`,
       );
       await session.page.screenshot({ path: filePath, fullPage: true });
-      return await toArtifactReference('screenshot', filePath, {
-        scope: 'step',
-        step_id: step.sourceStepId,
-        status,
+      return await this.storage.persistArtifact({
+        kind: 'screenshot',
+        filePath,
+        contentType: 'image/png',
+        metadata: {
+          scope: 'step',
+          step_id: step.sourceStepId,
+          status,
+        },
       });
     } catch {
       return undefined;
@@ -251,10 +234,15 @@ export class PlaywrightArtifactCollector implements ArtifactCollector {
         `${sanitizeSegment(step.sourceStepId)}-${sanitizeSegment(status)}.zip`,
       );
       await session.context.tracing.stopChunk({ path: filePath });
-      return await toArtifactReference('trace', filePath, {
-        scope: 'step',
-        step_id: step.sourceStepId,
-        status,
+      return await this.storage.persistArtifact({
+        kind: 'trace',
+        filePath,
+        contentType: 'application/zip',
+        metadata: {
+          scope: 'step',
+          step_id: step.sourceStepId,
+          status,
+        },
       });
     } catch {
       return undefined;

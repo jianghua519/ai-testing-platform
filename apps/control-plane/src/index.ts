@@ -7,3 +7,4 @@ export * from './runtime/postgres-migrations.js';
 export * from './runtime/postgres-control-plane-store.js';
 export * from './runtime/create-control-plane-store.js';
 export * from './runtime/control-plane-server.js';
+export * from './runtime/artifact-blob-store.js';

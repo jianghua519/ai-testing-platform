@@ -112,6 +112,22 @@ components:
           type: object
           description: Capture policy for screenshots/videos/traces.
           additionalProperties: true
+    ArtifactReference:
+      type: object
+      required: [kind, uri]
+      properties:
+        artifact_id: { type: string, minLength: 1 }
+        kind:
+          type: string
+          enum: [screenshot, trace, video, dom_snapshot, network_capture]
+        uri: { type: string, minLength: 1 }
+        content_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        sha256: { type: string }
+        retention_expires_at: { $ref: "#/components/schemas/ISO8601" }
+        metadata:
+          type: object
+          additionalProperties: true
     JobResultPayload:
       type: object
       required: [job_id, run_id, run_item_id, attempt_no, status]
@@ -131,8 +147,7 @@ components:
         artifacts:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/ArtifactReference"
         usage:
           type: object
           description: Metering usage (e.g. tokens, duration_ms).
@@ -159,8 +174,7 @@ components:
         artifacts:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            $ref: "#/components/schemas/ArtifactReference"
         extracted_variables:
           type: array
           items:

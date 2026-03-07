@@ -2,7 +2,7 @@
 title: 任务设计说明索引
 status: active
 owner: architecture
-last_updated: 2026-03-06
+last_updated: 2026-03-07
 summary: 任务级设计说明文档的存放位置和索引规则。
 ---
 
@@ -67,3 +67,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-124416-playwright-agent-capability-lease-design-task.md` - 真实 Playwright 调度执行与 agent capability/lease 正式化
 
 - `2026-03-07`: `docs/design/tasks/20260307-133052-cancel-pause-resume-artifact-design-task.md` - 并发槽位、cancel/pause/resume 与 artifact 真采集闭环
+
+- `2026-03-07`: `docs/design/tasks/20260307-150657-artifact-object-storage-retention-design-task.md` - artifact 对象存储、下载与保留策略

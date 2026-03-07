@@ -7,15 +7,21 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/web-dsl-schema/package.json ./packages/web-dsl-schema/package.json
+COPY packages/dsl-compiler/package.json ./packages/dsl-compiler/package.json
+COPY packages/playwright-adapter/package.json ./packages/playwright-adapter/package.json
+COPY apps/web-worker/package.json ./apps/web-worker/package.json
+COPY apps/control-plane/package.json ./apps/control-plane/package.json
+
+RUN npm ci
+RUN npx playwright install --with-deps chromium
+
 COPY apps ./apps
 COPY packages ./packages
 COPY scripts ./scripts
 COPY contracts ./contracts
 COPY docs ./docs
 COPY README.md ./
-
-RUN npm ci
-RUN npx playwright install --with-deps chromium
 RUN npm run build
 
 EXPOSE 8080

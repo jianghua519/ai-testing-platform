@@ -9,6 +9,7 @@ export interface ArtifactReference {
   contentType?: string;
   sizeBytes?: number;
   sha256?: string;
+  retentionExpiresAt?: string;
   metadata?: Record<string, unknown>;
 }
 

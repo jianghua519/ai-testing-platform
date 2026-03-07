@@ -1,9 +1,11 @@
+import { execFile as execFileCallback } from 'node:child_process';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
+import { promisify } from 'node:util';
+import { CreateBucketCommand, HeadBucketCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Pool } from 'pg';
 import { DefaultDslCompiler } from '../packages/dsl-compiler/dist/index.js';
 import { RegistryBasedPlaywrightAdapter } from '../packages/playwright-adapter/dist/index.js';
@@ -18,12 +20,41 @@ import {
 } from '../apps/web-worker/dist/index.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const execFile = promisify(execFileCallback);
 
 const baseUrl = process.env.CONTROL_PLANE_BASE_URL ?? 'http://control-plane:8080';
 const connectionString = process.env.CONTROL_PLANE_DATABASE_URL;
 if (!connectionString) {
   throw new Error('CONTROL_PLANE_DATABASE_URL is required');
 }
+
+const artifactStorageMode = process.env.ARTIFACT_STORAGE_MODE ?? 'filesystem';
+const artifactBucket = process.env.ARTIFACT_S3_BUCKET;
+const artifactS3Endpoint = process.env.ARTIFACT_S3_ENDPOINT;
+const artifactS3Region = process.env.ARTIFACT_S3_REGION ?? 'us-east-1';
+const artifactS3AccessKeyId = process.env.ARTIFACT_S3_ACCESS_KEY_ID;
+const artifactS3SecretAccessKey = process.env.ARTIFACT_S3_SECRET_ACCESS_KEY;
+const artifactS3ForcePathStyle = process.env.ARTIFACT_S3_FORCE_PATH_STYLE
+  ? process.env.ARTIFACT_S3_FORCE_PATH_STYLE === 'true'
+  : true;
+
+const artifactS3Client = artifactStorageMode === 's3'
+  ? (() => {
+    if (!artifactBucket || !artifactS3Endpoint || !artifactS3AccessKeyId || !artifactS3SecretAccessKey) {
+      throw new Error('ARTIFACT_S3_BUCKET, ARTIFACT_S3_ENDPOINT, ARTIFACT_S3_ACCESS_KEY_ID and ARTIFACT_S3_SECRET_ACCESS_KEY are required when ARTIFACT_STORAGE_MODE=s3');
+    }
+
+    return new S3Client({
+      endpoint: artifactS3Endpoint,
+      region: artifactS3Region,
+      forcePathStyle: artifactS3ForcePathStyle,
+      credentials: {
+        accessKeyId: artifactS3AccessKeyId,
+        secretAccessKey: artifactS3SecretAccessKey,
+      },
+    });
+  })()
+  : undefined;
 
 const pool = new Pool({ connectionString });
 
@@ -49,10 +80,49 @@ const getJson = async (pathname) => {
   };
 };
 
+const getResponse = (pathname, options = {}) => fetch(new URL(pathname, baseUrl), options);
+
 const assertOk = (condition, message) => {
   if (!condition) {
     throw new Error(message);
   }
+};
+
+const isObjectMissingError = (error) => {
+  const name = error && typeof error === 'object' && typeof error.name === 'string'
+    ? error.name
+    : '';
+  const statusCode = error && typeof error === 'object' && error.$metadata && typeof error.$metadata.httpStatusCode === 'number'
+    ? error.$metadata.httpStatusCode
+    : undefined;
+  return name === 'NoSuchKey' || name === 'NotFound' || statusCode === 404;
+};
+
+const ensureArtifactBucket = async () => {
+  if (!artifactS3Client || !artifactBucket) {
+    return;
+  }
+
+  try {
+    await artifactS3Client.send(new HeadBucketCommand({ Bucket: artifactBucket }));
+  } catch {
+    await artifactS3Client.send(new CreateBucketCommand({ Bucket: artifactBucket }));
+  }
+};
+
+const parseS3ArtifactLocation = (artifact) => {
+  if (artifact?.metadata?.storage_bucket && artifact?.metadata?.storage_object_key) {
+    return {
+      bucket: artifact.metadata.storage_bucket,
+      key: artifact.metadata.storage_object_key,
+    };
+  }
+
+  const uri = new URL(artifact.storage_uri);
+  return {
+    bucket: uri.hostname,
+    key: decodeURIComponent(uri.pathname.replace(/^\/+/, '')),
+  };
 };
 
 const waitFor = async (fn, { timeoutMs = 20000, intervalMs = 100, label = 'condition' } = {}) => {
@@ -396,6 +466,7 @@ const tempDir = await mkdtemp(path.join(os.tmpdir(), 'aiwtp-scheduler-real-'));
 const uploadFilePath = path.join(tempDir, 'avatar-smoke.txt');
 await writeFile(uploadFilePath, 'avatar smoke payload\n', 'utf8');
 process.env.WEB_WORKER_ARTIFACT_ROOT = path.join(tempDir, 'artifacts');
+await ensureArtifactBucket();
 const targetServer = await startTargetServer();
 
 try {
@@ -593,17 +664,35 @@ try {
   const hitPaths = interactionHits.map((item) => item.path);
 
   const artifactTypeSets = artifactsByRunItem.map((response) => new Set(response.body.items.map((item) => item.artifact_type)));
+  const allArtifacts = artifactsByRunItem.flatMap((response) => response.body.items);
   const artifactSamples = [];
   for (const response of artifactsByRunItem) {
     for (const artifact of response.body.items) {
       if (['screenshot', 'trace', 'video'].includes(artifact.artifact_type)) {
-        const filePath = fileURLToPath(artifact.storage_uri);
-        const fileStats = await stat(filePath);
-        artifactSamples.push({
-          artifactType: artifact.artifact_type,
-          storageUri: artifact.storage_uri,
-          sizeBytes: fileStats.size,
-        });
+        if (artifactS3Client) {
+          const location = parseS3ArtifactLocation(artifact);
+          const head = await artifactS3Client.send(new HeadObjectCommand({
+            Bucket: location.bucket,
+            Key: location.key,
+          }));
+          artifactSamples.push({
+            artifactId: artifact.artifact_id,
+            artifactType: artifact.artifact_type,
+            storageUri: artifact.storage_uri,
+            sizeBytes: Number(head.ContentLength ?? 0),
+            retentionExpiresAt: artifact.retention_expires_at ?? null,
+            objectKey: location.key,
+          });
+        } else {
+          const fileStats = await stat(new URL(artifact.storage_uri));
+          artifactSamples.push({
+            artifactId: artifact.artifact_id,
+            artifactType: artifact.artifact_type,
+            storageUri: artifact.storage_uri,
+            sizeBytes: fileStats.size,
+            retentionExpiresAt: artifact.retention_expires_at ?? null,
+          });
+        }
       }
       if (artifactSamples.length >= 3) {
         break;
@@ -613,6 +702,62 @@ try {
       break;
     }
   }
+
+  const downloadableArtifact = allArtifacts.find((artifact) => artifact.artifact_type === 'screenshot');
+  assertOk(Boolean(downloadableArtifact), 'expected a screenshot artifact for download validation');
+
+  const redirectDownloadResponse = await getResponse(
+    `/api/v1/internal/artifacts/${downloadableArtifact.artifact_id}/download?mode=redirect`,
+    { redirect: 'manual' },
+  );
+  const redirectLocation = redirectDownloadResponse.headers.get('location');
+
+  const streamDownloadResponse = await getResponse(
+    `/api/v1/internal/artifacts/${downloadableArtifact.artifact_id}/download?mode=stream`,
+  );
+  const streamDownloadBytes = Buffer.from(await streamDownloadResponse.arrayBuffer());
+
+  await pool.query(
+    `update artifacts
+     set retention_expires_at = now() - interval '1 minute'
+     where artifact_id = $1`,
+    [downloadableArtifact.artifact_id],
+  );
+
+  const { stdout: pruneStdout } = await execFile('node', ['./scripts/prune_expired_artifacts.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      CONTROL_PLANE_STORE_MODE: 'postgres',
+      CONTROL_PLANE_DATABASE_URL: connectionString,
+      CONTROL_PLANE_RUN_MIGRATIONS: 'false',
+    },
+  });
+  const pruneResult = JSON.parse(pruneStdout.trim() || '{}');
+
+  const prunedArtifactRecord = await pool.query(
+    `select artifact_id
+     from artifacts
+     where artifact_id = $1`,
+    [downloadableArtifact.artifact_id],
+  );
+
+  let prunedBlobMissing = false;
+  if (artifactS3Client) {
+    const location = parseS3ArtifactLocation(downloadableArtifact);
+    try {
+      await artifactS3Client.send(new HeadObjectCommand({
+        Bucket: location.bucket,
+        Key: location.key,
+      }));
+    } catch (error) {
+      prunedBlobMissing = isObjectMissingError(error);
+    }
+  }
+
+  const deletedArtifactDownload = await getResponse(
+    `/api/v1/internal/artifacts/${downloadableArtifact.artifact_id}/download?mode=stream`,
+  );
 
   const runStatuses = new Map(runRows.rows.map((row) => [row.run_id, row.status]));
   const runItemStatuses = new Map(runItemRows.rows.map((row) => [row.run_item_id, row.status]));
@@ -654,6 +799,19 @@ try {
   assertOk(runItemRows.rows.every((row) => row.assigned_agent_id === null && row.lease_token === null && row.control_state === 'active'), 'expected all run items detached from agent, lease and control state');
   assertOk(artifactTypeSets.every((types) => types.has('screenshot') && types.has('trace') && types.has('video')), 'expected each run item to have screenshot/trace/video artifacts');
   assertOk(artifactSamples.length === 3, `expected artifact samples for screenshot/trace/video, got ${artifactSamples.length}`);
+  assertOk(allArtifacts.every((artifact) => artifact.storage_uri.startsWith('s3://')), 'expected artifact storage URIs to use s3://');
+  assertOk(allArtifacts.every((artifact) => typeof artifact.retention_expires_at === 'string' && artifact.retention_expires_at.length > 0), 'expected retention_expires_at for every artifact');
+  assertOk(redirectDownloadResponse.status === 302, `expected redirect download status 302, got ${redirectDownloadResponse.status}`);
+  assertOk(Boolean(redirectLocation) && redirectLocation.includes('X-Amz-Algorithm='), 'expected signed redirect download URL');
+  assertOk(streamDownloadResponse.status === 200, `expected stream download status 200, got ${streamDownloadResponse.status}`);
+  assertOk(streamDownloadBytes.byteLength > 0, 'expected streamed artifact bytes');
+  assertOk(streamDownloadResponse.headers.get('content-type') === 'image/png', `expected image/png download content-type, got ${streamDownloadResponse.headers.get('content-type')}`);
+  assertOk(pruneResult.deletedCount === 1, `expected prune to delete 1 artifact, got ${pruneResult.deletedCount}`);
+  assertOk(Array.isArray(pruneResult.deletedArtifactIds) && pruneResult.deletedArtifactIds.includes(downloadableArtifact.artifact_id), 'expected prune result to include deleted artifact id');
+  assertOk(pruneResult.failures?.length === 0, `expected prune failures to be empty, got ${JSON.stringify(pruneResult.failures)}`);
+  assertOk(prunedArtifactRecord.rows.length === 0, 'expected pruned artifact record to be removed');
+  assertOk(prunedBlobMissing, 'expected pruned artifact blob to be deleted from object storage');
+  assertOk(deletedArtifactDownload.status === 404, `expected deleted artifact download to return 404, got ${deletedArtifactDownload.status}`);
   assertOk(runsPage.body.items.length >= 3, 'expected at least 3 runs in list response');
 
   console.log(JSON.stringify({
@@ -682,6 +840,16 @@ try {
     stepEventStatusesByRun: stepEventsByRun.map((response) => response.body.items.map((item) => `${item.source_step_id}:${item.status}`)),
     artifactTypesByRunItem: artifactsByRunItem.map((response) => response.body.items.map((item) => item.artifact_type)),
     artifactSamples,
+    artifactRetentionByRunItem: artifactsByRunItem.map((response) => response.body.items.map((item) => item.retention_expires_at)),
+    artifactDownload: {
+      redirectStatus: redirectDownloadResponse.status,
+      redirectLocation,
+      streamStatus: streamDownloadResponse.status,
+      streamContentType: streamDownloadResponse.headers.get('content-type'),
+      streamSizeBytes: streamDownloadBytes.byteLength,
+      deletedStreamStatus: deletedArtifactDownload.status,
+    },
+    artifactPrune: pruneResult,
     jobEventTypesByJob: jobEventsByJob.map((response) => response.body.items.map((item) => item.envelope.event_type)),
     agentRows: agentRows.rows,
     leaseRows: leaseRows.rows,

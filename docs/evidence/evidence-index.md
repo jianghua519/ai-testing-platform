@@ -2,7 +2,7 @@
 title: 测试举证索引
 status: active
 owner: qa
-last_updated: 2026-03-06
+last_updated: 2026-03-07
 summary: 仓库验证执行产生的测试举证记录索引。
 ---
 
@@ -63,3 +63,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-124416-playwright-agent-capability-lease-evidence.md` - 真实 Playwright 调度执行与 agent capability/lease 正式化 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-133052-cancel-pause-resume-artifact-evidence.md` - 并发槽位、cancel/pause/resume 与 artifact 真采集闭环 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-150657-artifact-object-storage-retention-evidence.md` - artifact 对象存储、下载与保留策略 的测试举证记录。

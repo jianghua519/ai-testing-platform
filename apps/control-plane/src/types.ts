@@ -141,6 +141,7 @@ export interface ControlPlaneArtifactRecord {
   sizeBytes: number | null;
   sha256: string | null;
   metadata: Record<string, unknown>;
+  retentionExpiresAt: string | null;
   createdAt: string;
 }
 
@@ -180,6 +181,11 @@ export interface ControlPlaneListStepEventsQuery {
 export interface ControlPlaneListArtifactsQuery {
   limit: number;
   cursor?: string;
+}
+
+export interface ControlPlaneListExpiredArtifactsQuery {
+  limit: number;
+  expiresBefore?: string;
 }
 
 export interface ControlPlaneEnqueueWebRunInput {
@@ -268,6 +274,9 @@ export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> 
   listStepEventsByRunItem(runItemId: string, query: ControlPlaneListStepEventsQuery): Promise<ControlPlanePage<ControlPlaneStepEventRecord>>;
   listArtifactsByRun?(runId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>>;
   listArtifactsByRunItem?(runItemId: string, query: ControlPlaneListArtifactsQuery): Promise<ControlPlanePage<ControlPlaneArtifactRecord>>;
+  getArtifact?(artifactId: string): Promise<ControlPlaneArtifactRecord | undefined>;
+  listExpiredArtifacts?(query: ControlPlaneListExpiredArtifactsQuery): Promise<ControlPlaneArtifactRecord[]>;
+  deleteArtifacts?(artifactIds: string[]): Promise<number>;
   resolveStepControlDecision?(
     jobId: string,
     runId: string,
