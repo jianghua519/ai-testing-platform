@@ -61,3 +61,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-103640-control-plane-migration-design-task.md` - control-plane正式migration体系和查询接口骨架
 
 - `2026-03-07`: `docs/design/tasks/20260307-111112-control-plane-002-migration-design-task.md` - control-plane 002 migration、分页查询接口和容器化本地栈
+
+- `2026-03-07`: `docs/design/tasks/20260307-115908-control-plane-agent-worker-postgresql-design-task.md` - 把 control-plane + agent + worker + PostgreSQL 做成真正的调度系统

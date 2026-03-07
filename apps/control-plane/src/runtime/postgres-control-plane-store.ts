@@ -1,10 +1,21 @@
+import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import type {
+  ControlPlaneAcquireLeaseInput,
+  ControlPlaneAcquireLeaseResult,
+  ControlPlaneCompleteLeaseInput,
+  ControlPlaneEnqueueWebRunInput,
+  ControlPlaneEnqueueWebRunResult,
+  ControlPlaneHeartbeatAgentInput,
+  ControlPlaneHeartbeatLeaseInput,
+  ControlPlaneJobLeaseRecord,
+  ControlPlaneAgentRecord,
   ControlPlaneListRunItemsQuery,
   ControlPlaneListRunsQuery,
   ControlPlaneListStepEventsQuery,
   ControlPlaneMigrationRecord,
   ControlPlanePage,
+  ControlPlaneRegisterAgentInput,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
   ControlPlaneStateSnapshot,
@@ -19,6 +30,7 @@ import type {
   ResultReportedEnvelope,
   StepResultReportedEnvelope,
   StepControlResponse,
+  WebWorkerJob,
 } from '@aiwtp/web-worker';
 import {
   listControlPlanePostgresMigrations,
@@ -74,6 +86,8 @@ interface RunProjectionRow {
   run_id: string;
   tenant_id: string;
   project_id: string;
+  name: string | null;
+  mode: string | null;
   status: string;
   started_at: string | null;
   finished_at: string | null;
@@ -90,6 +104,9 @@ interface RunItemProjectionRow {
   project_id: string;
   attempt_no: number;
   status: string;
+  job_kind: string | null;
+  assigned_agent_id: string | null;
+  lease_token: string | null;
   started_at: string | null;
   finished_at: string | null;
   last_event_id: string;
@@ -116,6 +133,59 @@ interface StepEventProjectionRow {
   artifacts_json: unknown[] | string;
   extracted_variables_json: unknown[] | string;
   received_at: string;
+}
+
+interface QueuedRunItemRow {
+  run_item_id: string;
+  run_id: string;
+  job_id: string;
+  tenant_id: string;
+  project_id: string;
+  attempt_no: number;
+  status: string;
+  job_kind: string;
+  assigned_agent_id: string | null;
+  lease_token: string | null;
+  last_event_id: string;
+  created_at: string;
+  updated_at: string;
+  job_payload_json: WebWorkerJob | string;
+}
+
+interface AgentRow {
+  agent_id: string;
+  tenant_id: string;
+  project_id: string | null;
+  name: string;
+  platform: string;
+  architecture: string;
+  runtime_kind: string;
+  status: string;
+  capabilities_json: string[] | string;
+  metadata_json: Record<string, unknown> | string;
+  last_heartbeat_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LeaseRow {
+  lease_id: number;
+  job_id: string;
+  run_id: string;
+  run_item_id: string;
+  agent_id: string;
+  lease_token: string;
+  attempt_no: number;
+  status: string;
+  acquired_at: string;
+  expires_at: string;
+  heartbeat_at: string | null;
+  released_at: string | null;
+}
+
+interface ExpiredLeaseRow {
+  run_id: string | null;
+  run_item_id: string | null;
 }
 
 export interface PostgresControlPlaneStoreOptions {
@@ -231,6 +301,8 @@ const mapRunProjection = (row: RunProjectionRow): ControlPlaneRunRecord => ({
   runId: row.run_id,
   tenantId: row.tenant_id,
   projectId: row.project_id,
+  name: row.name,
+  mode: row.mode,
   status: row.status,
   startedAt: row.started_at,
   finishedAt: row.finished_at,
@@ -247,6 +319,9 @@ const mapRunItemProjection = (row: RunItemProjectionRow): ControlPlaneRunItemRec
   projectId: row.project_id,
   attemptNo: row.attempt_no,
   status: row.status,
+  jobKind: row.job_kind,
+  assignedAgentId: row.assigned_agent_id,
+  leaseToken: row.lease_token,
   startedAt: row.started_at,
   finishedAt: row.finished_at,
   lastEventId: row.last_event_id,
@@ -275,6 +350,37 @@ const mapStepEventProjection = (row: StepEventProjectionRow): ControlPlaneStepEv
   receivedAt: row.received_at,
 });
 
+const mapAgent = (row: AgentRow): ControlPlaneAgentRecord => ({
+  agentId: row.agent_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  name: row.name,
+  platform: row.platform,
+  architecture: row.architecture,
+  runtimeKind: row.runtime_kind,
+  status: row.status,
+  capabilities: parseJsonColumn<string[]>(row.capabilities_json) ?? [],
+  metadata: parseJsonColumn<Record<string, unknown>>(row.metadata_json) ?? {},
+  lastHeartbeatAt: row.last_heartbeat_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapLease = (row: LeaseRow): ControlPlaneJobLeaseRecord => ({
+  leaseId: row.lease_id,
+  leaseToken: row.lease_token,
+  jobId: row.job_id,
+  runId: row.run_id,
+  runItemId: row.run_item_id,
+  agentId: row.agent_id,
+  attemptNo: row.attempt_no,
+  status: row.status,
+  acquiredAt: row.acquired_at,
+  expiresAt: row.expires_at,
+  heartbeatAt: row.heartbeat_at,
+  releasedAt: row.released_at,
+});
+
 const toPage = <T>(items: T[], limit: number, getCursor: (item: T) => { primary: string; secondary: string }): ControlPlanePage<T> => {
   const visibleItems = items.slice(0, limit);
   const nextCursor = items.length > limit && visibleItems.length > 0
@@ -285,6 +391,17 @@ const toPage = <T>(items: T[], limit: number, getCursor: (item: T) => { primary:
     items: visibleItems,
     nextCursor,
   };
+};
+
+const mapCompletionToProjectionStatus = (status: ControlPlaneCompleteLeaseInput['status']): 'passed' | 'failed' | 'canceled' => {
+  switch (status) {
+    case 'succeeded':
+      return 'passed';
+    case 'failed':
+      return 'failed';
+    case 'canceled':
+      return 'canceled';
+  }
 };
 
 export class PostgresControlPlaneStore implements ControlPlaneStore {
@@ -309,6 +426,393 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
     return listControlPlanePostgresMigrations(this.pool);
+  }
+
+  async enqueueWebRun(input: ControlPlaneEnqueueWebRunInput): Promise<ControlPlaneEnqueueWebRunResult> {
+    const runId = randomUUID();
+    const runItemId = randomUUID();
+    const jobId = randomUUID();
+    const queueEventId = randomUUID();
+    const now = new Date().toISOString();
+    const job: WebWorkerJob = {
+      jobId,
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      runId,
+      runItemId,
+      attemptNo: 0,
+      traceId: input.traceId ?? randomUUID(),
+      correlationId: input.correlationId,
+      plan: input.plan,
+      envProfile: input.envProfile,
+      variableContext: input.variableContext,
+    };
+
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await client.query(
+        `insert into runs (
+           run_id,
+           tenant_id,
+           project_id,
+           name,
+           mode,
+           status,
+           last_event_id,
+           created_at,
+           updated_at
+         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          runId,
+          input.tenantId,
+          input.projectId,
+          input.name,
+          input.mode ?? 'standard',
+          'queued',
+          queueEventId,
+          now,
+          now,
+        ],
+      );
+      await client.query(
+        `insert into run_items (
+           run_item_id,
+           run_id,
+           job_id,
+           tenant_id,
+           project_id,
+           attempt_no,
+           status,
+           job_kind,
+           job_payload_json,
+           last_event_id,
+           created_at,
+           updated_at
+         ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)`,
+        [
+          runItemId,
+          runId,
+          jobId,
+          input.tenantId,
+          input.projectId,
+          0,
+          'pending',
+          'web',
+          JSON.stringify(job),
+          queueEventId,
+          now,
+          now,
+        ],
+      );
+      await client.query('commit');
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return {
+      run: {
+        runId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        name: input.name,
+        mode: input.mode ?? 'standard',
+        status: 'queued',
+        startedAt: null,
+        finishedAt: null,
+        lastEventId: queueEventId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      runItem: {
+        runItemId,
+        runId,
+        jobId,
+        tenantId: input.tenantId,
+        projectId: input.projectId,
+        attemptNo: 0,
+        status: 'pending',
+        jobKind: 'web',
+        assignedAgentId: null,
+        leaseToken: null,
+        startedAt: null,
+        finishedAt: null,
+        lastEventId: queueEventId,
+        createdAt: now,
+        updatedAt: now,
+      },
+      job,
+    };
+  }
+
+  async registerAgent(input: ControlPlaneRegisterAgentInput): Promise<ControlPlaneAgentRecord> {
+    const result = await this.pool.query<AgentRow>(
+      `insert into agents (
+         agent_id,
+         tenant_id,
+         project_id,
+         name,
+         platform,
+         architecture,
+         runtime_kind,
+         status,
+         capabilities_json,
+         metadata_json,
+         last_heartbeat_at
+       ) values (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, now()
+       )
+       on conflict (agent_id) do update set
+         tenant_id = excluded.tenant_id,
+         project_id = excluded.project_id,
+         name = excluded.name,
+         platform = excluded.platform,
+         architecture = excluded.architecture,
+         runtime_kind = excluded.runtime_kind,
+         status = excluded.status,
+         capabilities_json = excluded.capabilities_json,
+         metadata_json = excluded.metadata_json,
+         last_heartbeat_at = now(),
+         updated_at = now()
+       returning agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
+                 capabilities_json, metadata_json, last_heartbeat_at, created_at, updated_at`,
+      [
+        input.agentId,
+        input.tenantId,
+        input.projectId ?? null,
+        input.name,
+        input.platform,
+        input.architecture,
+        input.runtimeKind,
+        input.status ?? 'online',
+        JSON.stringify(input.capabilities),
+        JSON.stringify(input.metadata ?? {}),
+      ],
+    );
+
+    return mapAgent(result.rows[0]);
+  }
+
+  async heartbeatAgent(agentId: string, input: ControlPlaneHeartbeatAgentInput): Promise<ControlPlaneAgentRecord | undefined> {
+    const result = await this.pool.query<AgentRow>(
+      `update agents
+       set status = coalesce($2, status),
+           capabilities_json = coalesce($3::jsonb, capabilities_json),
+           metadata_json = coalesce($4::jsonb, metadata_json),
+           last_heartbeat_at = now(),
+           updated_at = now()
+       where agent_id = $1
+       returning agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
+                 capabilities_json, metadata_json, last_heartbeat_at, created_at, updated_at`,
+      [
+        agentId,
+        input.status ?? null,
+        input.capabilities ? JSON.stringify(input.capabilities) : null,
+        input.metadata ? JSON.stringify(input.metadata) : null,
+      ],
+    );
+
+    return result.rows[0] ? mapAgent(result.rows[0]) : undefined;
+  }
+
+  async acquireLease(agentId: string, input: ControlPlaneAcquireLeaseInput): Promise<ControlPlaneAcquireLeaseResult | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await this.reclaimExpiredLeases(client);
+
+      const agentResult = await client.query<AgentRow>(
+        `select agent_id, tenant_id, project_id, name, platform, architecture, runtime_kind, status,
+                capabilities_json, metadata_json, last_heartbeat_at, created_at, updated_at
+         from agents
+         where agent_id = $1
+         limit 1
+         for update`,
+        [agentId],
+      );
+      if (agentResult.rows.length === 0) {
+        await client.query('rollback');
+        return undefined;
+      }
+
+      const agent = mapAgent(agentResult.rows[0]);
+      const supportedJobKinds = input.supportedJobKinds.length > 0 ? input.supportedJobKinds : ['web'];
+      const candidateResult = await client.query<QueuedRunItemRow>(
+        `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
+                assigned_agent_id, lease_token, last_event_id, created_at, updated_at, job_payload_json
+         from run_items
+         where tenant_id = $1
+           and ($2::text is null or project_id = $2)
+           and status = 'pending'
+           and job_kind = any($3::text[])
+         order by created_at asc, run_item_id asc
+         limit 1
+         for update skip locked`,
+        [agent.tenantId, agent.projectId, supportedJobKinds],
+      );
+
+      if (candidateResult.rows.length === 0) {
+        await client.query('commit');
+        return undefined;
+      }
+
+      const candidate = candidateResult.rows[0];
+      const leaseToken = randomUUID();
+      const ttlSeconds = Math.max(10, input.leaseTtlSeconds);
+      const leaseResult = await client.query<LeaseRow>(
+        `insert into job_leases (
+           job_id,
+           run_id,
+           run_item_id,
+           agent_id,
+           lease_token,
+           attempt_no,
+           status,
+           metadata_json,
+           expires_at,
+           heartbeat_at
+         ) values (
+           $1, $2, $3, $4, $5, $6, 'leased', '{}'::jsonb, now() + make_interval(secs => $7), now()
+         )
+         returning lease_id, job_id, run_id, run_item_id, agent_id, lease_token, attempt_no, status,
+                   acquired_at, expires_at, heartbeat_at, released_at`,
+        [
+          candidate.job_id,
+          candidate.run_id,
+          candidate.run_item_id,
+          agentId,
+          leaseToken,
+          candidate.attempt_no,
+          ttlSeconds,
+        ],
+      );
+
+      await client.query(
+        `update run_items
+         set status = 'dispatched',
+             assigned_agent_id = $2,
+             lease_token = $3,
+             updated_at = now()
+         where run_item_id = $1`,
+        [candidate.run_item_id, agentId, leaseToken],
+      );
+      await client.query(
+        `update runs
+         set status = case when status in ('created', 'queued') then 'running' else status end,
+             updated_at = now()
+         where run_id = $1`,
+        [candidate.run_id],
+      );
+      await client.query(
+        `update agents
+         set status = 'online',
+             last_heartbeat_at = now(),
+             updated_at = now()
+         where agent_id = $1`,
+        [agentId],
+      );
+
+      await client.query('commit');
+      return {
+        lease: mapLease(leaseResult.rows[0]),
+        job: parseJsonColumn<WebWorkerJob>(candidate.job_payload_json) as WebWorkerJob,
+      };
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async heartbeatLease(leaseToken: string, input: ControlPlaneHeartbeatLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined> {
+    const ttlSeconds = Math.max(10, input.leaseTtlSeconds);
+    const result = await this.pool.query<LeaseRow>(
+      `update job_leases
+       set heartbeat_at = now(),
+           expires_at = now() + make_interval(secs => $2)
+       where lease_token = $1
+         and released_at is null
+       returning lease_id, job_id, run_id, run_item_id, agent_id, lease_token, attempt_no, status,
+                 acquired_at, expires_at, heartbeat_at, released_at`,
+      [leaseToken, ttlSeconds],
+    );
+
+    return result.rows[0] ? mapLease(result.rows[0]) : undefined;
+  }
+
+  async completeLease(leaseToken: string, input: ControlPlaneCompleteLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const mappedStatus = mapCompletionToProjectionStatus(input.status);
+      const result = await client.query<LeaseRow>(
+        `update job_leases
+         set status = $2,
+             released_at = now(),
+             heartbeat_at = now()
+         where lease_token = $1
+           and released_at is null
+         returning lease_id, job_id, run_id, run_item_id, agent_id, lease_token, attempt_no, status,
+                   acquired_at, expires_at, heartbeat_at, released_at`,
+        [leaseToken, input.status],
+      );
+      if (result.rows.length === 0) {
+        const existingResult = await client.query<LeaseRow>(
+          `select lease_id, job_id, run_id, run_item_id, agent_id, lease_token, attempt_no, status,
+                  acquired_at, expires_at, heartbeat_at, released_at
+           from job_leases
+           where lease_token = $1
+           limit 1`,
+          [leaseToken],
+        );
+        if (existingResult.rows.length === 0) {
+          await client.query('rollback');
+          return undefined;
+        }
+
+        await client.query('commit');
+        return mapLease(existingResult.rows[0]);
+      }
+
+      const lease = mapLease(result.rows[0]);
+      await client.query(
+        `update run_items
+         set assigned_agent_id = null,
+             lease_token = null,
+             status = case
+               when status in ('passed', 'failed', 'canceled') then status
+               else $2
+             end,
+             updated_at = now()
+         where run_item_id = $1`,
+        [lease.runItemId, mappedStatus],
+      );
+
+      if (mappedStatus !== 'passed') {
+        await client.query(
+          `update runs
+           set status = case
+             when status in ('passed', 'failed', 'canceled') then status
+             else $2
+           end,
+           updated_at = now()
+           where run_id = $1`,
+          [lease.runId, mappedStatus],
+        );
+      }
+
+      await client.query('commit');
+      return lease;
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult> {
@@ -365,6 +869,9 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       await this.linkStepDecisions(client, envelope);
       if (isStepResultEnvelope(envelope)) {
         await this.insertStepEventProjection(client, envelope);
+      }
+      if (isJobResultEnvelope(envelope)) {
+        await this.releaseLeaseForCompletedJob(client, envelope);
       }
 
       await client.query('commit');
@@ -475,7 +982,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async getRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
     const result = await this.pool.query<RunProjectionRow>(
-      `select run_id, tenant_id, project_id, status, started_at, finished_at, last_event_id, created_at, updated_at
+      `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
        from runs
        where run_id = $1
        limit 1`,
@@ -487,7 +994,7 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   async listRuns(query: ControlPlaneListRunsQuery): Promise<ControlPlanePage<ControlPlaneRunRecord>> {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.tenantId, query.projectId];
-    let sql = `select run_id, tenant_id, project_id, status, started_at, finished_at, last_event_id, created_at, updated_at
+    let sql = `select run_id, tenant_id, project_id, name, mode, status, started_at, finished_at, last_event_id, created_at, updated_at
        from runs
        where tenant_id = $1
          and project_id = $2`;
@@ -512,7 +1019,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
 
   async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
     const result = await this.pool.query<RunItemProjectionRow>(
-      `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, started_at, finished_at, last_event_id, created_at, updated_at
+      `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
+              assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
        from run_items
        where run_item_id = $1
        limit 1`,
@@ -524,7 +1032,8 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   async listRunItems(query: ControlPlaneListRunItemsQuery): Promise<ControlPlanePage<ControlPlaneRunItemRecord>> {
     const cursor = decodeCursor(query.cursor);
     const values: unknown[] = [query.runId];
-    let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, started_at, finished_at, last_event_id, created_at, updated_at
+    let sql = `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, job_kind,
+                      assigned_agent_id, lease_token, started_at, finished_at, last_event_id, created_at, updated_at
        from run_items
        where run_id = $1`;
 
@@ -643,6 +1152,53 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   async close(): Promise<void> {
     if (this.ownPool) {
       await this.pool.end();
+    }
+  }
+
+  private async reclaimExpiredLeases(client: SqlPoolClientLike): Promise<void> {
+    const expiredResult = await client.query<ExpiredLeaseRow>(
+      `update job_leases
+       set status = 'expired',
+           released_at = now()
+       where released_at is null
+         and expires_at < now()
+       returning run_id, run_item_id`,
+    );
+
+    const expiredRunItemIds = expiredResult.rows
+      .map((row) => row.run_item_id)
+      .filter((value): value is string => Boolean(value));
+    if (expiredRunItemIds.length > 0) {
+      await client.query(
+        `update run_items
+         set status = 'pending',
+             assigned_agent_id = null,
+             lease_token = null,
+             updated_at = now()
+         where run_item_id = any($1::text[])
+           and status in ('dispatched', 'running')`,
+        [expiredRunItemIds],
+      );
+    }
+
+    const expiredRunIds = Array.from(new Set(expiredResult.rows
+      .map((row) => row.run_id)
+      .filter((value): value is string => Boolean(value))));
+    if (expiredRunIds.length > 0) {
+      await client.query(
+        `update runs
+         set status = 'queued',
+             updated_at = now()
+         where run_id = any($1::text[])
+           and status = 'running'
+           and exists (
+             select 1
+             from run_items
+             where run_items.run_id = runs.run_id
+               and run_items.status = 'pending'
+           )`,
+        [expiredRunIds],
+      );
     }
   }
 
@@ -767,6 +1323,33 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
         envelope.payload.run_item_id,
         envelope.payload.job_id,
       ],
+    );
+  }
+
+  private async releaseLeaseForCompletedJob(client: SqlPoolClientLike, envelope: ResultReportedEnvelope): Promise<void> {
+    await client.query(
+      `update job_leases
+       set status = case
+         when $2 = 'passed' then 'completed'
+         when $2 = 'failed' then 'failed'
+         else 'canceled'
+       end,
+           released_at = coalesce(released_at, now()),
+           heartbeat_at = now()
+       where job_id = $1
+         and released_at is null`,
+      [
+        envelope.payload.job_id,
+        envelope.payload.status,
+      ],
+    );
+    await client.query(
+      `update run_items
+       set assigned_agent_id = null,
+           lease_token = null,
+           updated_at = now()
+       where job_id = $1`,
+      [envelope.payload.job_id],
     );
   }
 }

@@ -1,5 +1,13 @@
+import type { EnvProfile, WebStepPlanDraft } from '@aiwtp/web-dsl-schema';
+import type {
+  ResultReportedEnvelope,
+  StepResultReportedEnvelope,
+  StepResultPayload,
+  StepControlResponse,
+  StepControlRequest,
+  WebWorkerJob,
+} from '@aiwtp/web-worker';
 import type { CompiledStep } from '@aiwtp/web-dsl-schema';
-import type { ResultReportedEnvelope, StepResultReportedEnvelope, StepResultPayload, StepControlResponse, StepControlRequest } from '@aiwtp/web-worker';
 
 export type RunnerResultEnvelope = ResultReportedEnvelope | StepResultReportedEnvelope;
 
@@ -50,6 +58,8 @@ export interface ControlPlaneRunRecord {
   runId: string;
   tenantId: string;
   projectId: string;
+  name?: string | null;
+  mode?: string | null;
   status: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -66,6 +76,9 @@ export interface ControlPlaneRunItemRecord {
   projectId: string;
   attemptNo: number;
   status: string;
+  jobKind?: string | null;
+  assignedAgentId?: string | null;
+  leaseToken?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   lastEventId: string;
@@ -94,6 +107,37 @@ export interface ControlPlaneStepEventRecord {
   receivedAt: string;
 }
 
+export interface ControlPlaneAgentRecord {
+  agentId: string;
+  tenantId: string;
+  projectId: string | null;
+  name: string;
+  platform: string;
+  architecture: string;
+  runtimeKind: string;
+  status: string;
+  capabilities: string[];
+  metadata: Record<string, unknown>;
+  lastHeartbeatAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ControlPlaneJobLeaseRecord {
+  leaseId: number;
+  leaseToken: string;
+  jobId: string;
+  runId: string;
+  runItemId: string;
+  agentId: string;
+  attemptNo: number;
+  status: string;
+  acquiredAt: string;
+  expiresAt: string;
+  heartbeatAt: string | null;
+  releasedAt: string | null;
+}
+
 export interface ControlPlaneListRunsQuery {
   tenantId: string;
   projectId: string;
@@ -112,7 +156,71 @@ export interface ControlPlaneListStepEventsQuery {
   cursor?: string;
 }
 
-export interface ControlPlaneStore {
+export interface ControlPlaneEnqueueWebRunInput {
+  tenantId: string;
+  projectId: string;
+  name: string;
+  mode?: string;
+  plan: WebStepPlanDraft;
+  envProfile: EnvProfile;
+  variableContext?: Record<string, unknown>;
+  traceId?: string;
+  correlationId?: string;
+}
+
+export interface ControlPlaneEnqueueWebRunResult {
+  run: ControlPlaneRunRecord;
+  runItem: ControlPlaneRunItemRecord;
+  job: WebWorkerJob;
+}
+
+export interface ControlPlaneRegisterAgentInput {
+  agentId: string;
+  tenantId: string;
+  projectId?: string;
+  name: string;
+  platform: string;
+  architecture: string;
+  runtimeKind: string;
+  capabilities: string[];
+  metadata?: Record<string, unknown>;
+  status?: string;
+}
+
+export interface ControlPlaneHeartbeatAgentInput {
+  status?: string;
+  capabilities?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ControlPlaneAcquireLeaseInput {
+  supportedJobKinds: string[];
+  leaseTtlSeconds: number;
+}
+
+export interface ControlPlaneAcquireLeaseResult {
+  lease: ControlPlaneJobLeaseRecord;
+  job: WebWorkerJob;
+}
+
+export interface ControlPlaneHeartbeatLeaseInput {
+  leaseTtlSeconds: number;
+}
+
+export interface ControlPlaneCompleteLeaseInput {
+  status: 'succeeded' | 'failed' | 'canceled';
+}
+
+export interface ControlPlaneSchedulingStore {
+  enqueueWebRun(input: ControlPlaneEnqueueWebRunInput): Promise<ControlPlaneEnqueueWebRunResult>;
+  registerAgent(input: ControlPlaneRegisterAgentInput): Promise<ControlPlaneAgentRecord>;
+  heartbeatAgent(agentId: string, input: ControlPlaneHeartbeatAgentInput): Promise<ControlPlaneAgentRecord | undefined>;
+  acquireLease(agentId: string, input: ControlPlaneAcquireLeaseInput): Promise<ControlPlaneAcquireLeaseResult | undefined>;
+  heartbeatLease(leaseToken: string, input: ControlPlaneHeartbeatLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined>;
+  completeLease(leaseToken: string, input: ControlPlaneCompleteLeaseInput): Promise<ControlPlaneJobLeaseRecord | undefined>;
+}
+
+export interface ControlPlaneStore extends Partial<ControlPlaneSchedulingStore> {
   recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult>;
   listJobEvents(jobId: string): Promise<RecordedRunnerEvent[]>;
   enqueueStepDecision(jobId: string, sourceStepId: string, decision: StepControlResponse): Promise<void>;

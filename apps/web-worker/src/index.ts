@@ -12,4 +12,8 @@ export * from './bootstrap/create-worker.js';
 export * from './control/types.js';
 export * from './control/http-step-controller.js';
 export * from './control/create-controller.js';
+export * from './agent/types.js';
+export * from './agent/http-control-plane-client.js';
+export * from './agent/polling-web-agent.js';
 export * from './testing/fixture.js';
+export * from './testing/fake-browser-launcher.js';

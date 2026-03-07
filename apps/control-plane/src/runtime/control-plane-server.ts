@@ -3,9 +3,18 @@ import { once } from 'node:events';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import type {
+  ControlPlaneAcquireLeaseInput,
+  ControlPlaneAgentRecord,
+  ControlPlaneCompleteLeaseInput,
+  ControlPlaneEnqueueWebRunInput,
+  ControlPlaneHeartbeatAgentInput,
+  ControlPlaneHeartbeatLeaseInput,
+  ControlPlaneJobLeaseRecord,
   ControlPlanePage,
+  ControlPlaneRegisterAgentInput,
   ControlPlaneRunItemRecord,
   ControlPlaneRunRecord,
+  ControlPlaneSchedulingStore,
   ControlPlaneServer,
   ControlPlaneStepEventRecord,
   ControlPlaneStore,
@@ -41,6 +50,8 @@ const readJson = async <T>(request: IncomingMessage): Promise<T> => {
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+const isString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+const isStringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
 
 const isRunnerResultEnvelope = (value: unknown): value is RunnerResultEnvelope =>
   isObject(value) && typeof value.event_type === 'string' && isObject(value.payload) && typeof value.payload.job_id === 'string';
@@ -56,6 +67,87 @@ const isStepOverrideRequest = (value: unknown): value is StepOverrideRequest =>
   isObject(value)
   && typeof value.action === 'string';
 
+const isEnqueueWebRunRequest = (value: unknown): value is ControlPlaneEnqueueWebRunInput =>
+  isObject(value)
+  && isString(value.tenantId ?? value.tenant_id)
+  && isString(value.projectId ?? value.project_id)
+  && isString(value.name)
+  && isObject(value.plan)
+  && isObject(value.envProfile ?? value.env_profile)
+  && (value.variableContext === undefined || value.variable_context === undefined || isObject(value.variableContext ?? value.variable_context));
+
+const isRegisterAgentRequest = (value: unknown): value is ControlPlaneRegisterAgentInput =>
+  isObject(value)
+  && isString(value.agentId ?? value.agent_id)
+  && isString(value.tenantId ?? value.tenant_id)
+  && isString(value.name)
+  && isString(value.platform)
+  && isString(value.architecture)
+  && isString(value.runtimeKind ?? value.runtime_kind)
+  && isStringArray(value.capabilities)
+  && (value.projectId === undefined || value.project_id === undefined || typeof (value.projectId ?? value.project_id) === 'string');
+
+const isHeartbeatAgentRequest = (value: unknown): value is ControlPlaneHeartbeatAgentInput =>
+  isObject(value)
+  && (value.status === undefined || isString(value.status))
+  && (value.capabilities === undefined || isStringArray(value.capabilities))
+  && (value.metadata === undefined || isObject(value.metadata));
+
+const isAcquireLeaseRequest = (value: unknown): value is ControlPlaneAcquireLeaseInput =>
+  isObject(value)
+  && isStringArray(value.supported_job_kinds ?? value.supportedJobKinds)
+  && Number.isInteger(value.lease_ttl_seconds ?? value.leaseTtlSeconds)
+  && Number(value.lease_ttl_seconds ?? value.leaseTtlSeconds) > 0;
+
+const isHeartbeatLeaseRequest = (value: unknown): value is ControlPlaneHeartbeatLeaseInput =>
+  isObject(value)
+  && Number.isInteger(value.lease_ttl_seconds ?? value.leaseTtlSeconds)
+  && Number(value.lease_ttl_seconds ?? value.leaseTtlSeconds) > 0;
+
+const isCompleteLeaseRequest = (value: unknown): value is ControlPlaneCompleteLeaseInput =>
+  isObject(value)
+  && ['succeeded', 'failed', 'canceled'].includes(String(value.status));
+
+const normalizeEnqueueWebRun = (value: Record<string, unknown>): ControlPlaneEnqueueWebRunInput => ({
+  tenantId: String(value.tenantId ?? value.tenant_id),
+  projectId: String(value.projectId ?? value.project_id),
+  name: String(value.name),
+  mode: typeof value.mode === 'string' ? value.mode : undefined,
+  plan: value.plan as ControlPlaneEnqueueWebRunInput['plan'],
+  envProfile: (value.envProfile ?? value.env_profile) as ControlPlaneEnqueueWebRunInput['envProfile'],
+  variableContext: (value.variableContext ?? value.variable_context) as Record<string, unknown> | undefined,
+  traceId: typeof value.traceId === 'string' ? value.traceId : typeof value.trace_id === 'string' ? value.trace_id : undefined,
+  correlationId: typeof value.correlationId === 'string' ? value.correlationId : typeof value.correlation_id === 'string' ? value.correlation_id : undefined,
+});
+
+const normalizeRegisterAgent = (value: Record<string, unknown>): ControlPlaneRegisterAgentInput => ({
+  agentId: String(value.agentId ?? value.agent_id),
+  tenantId: String(value.tenantId ?? value.tenant_id),
+  projectId: typeof (value.projectId ?? value.project_id) === 'string' ? String(value.projectId ?? value.project_id) : undefined,
+  name: String(value.name),
+  platform: String(value.platform),
+  architecture: String(value.architecture),
+  runtimeKind: String(value.runtimeKind ?? value.runtime_kind),
+  capabilities: (value.capabilities as string[]) ?? [],
+  metadata: isObject(value.metadata) ? value.metadata : undefined,
+  status: typeof value.status === 'string' ? value.status : undefined,
+});
+
+const normalizeHeartbeatAgent = (value: Record<string, unknown>): ControlPlaneHeartbeatAgentInput => ({
+  status: typeof value.status === 'string' ? value.status : undefined,
+  capabilities: isStringArray(value.capabilities) ? value.capabilities : undefined,
+  metadata: isObject(value.metadata) ? value.metadata : undefined,
+});
+
+const normalizeAcquireLease = (value: Record<string, unknown>): ControlPlaneAcquireLeaseInput => ({
+  supportedJobKinds: (value.supportedJobKinds ?? value.supported_job_kinds) as string[],
+  leaseTtlSeconds: Number(value.leaseTtlSeconds ?? value.lease_ttl_seconds),
+});
+
+const normalizeHeartbeatLease = (value: Record<string, unknown>): ControlPlaneHeartbeatLeaseInput => ({
+  leaseTtlSeconds: Number(value.leaseTtlSeconds ?? value.lease_ttl_seconds),
+});
+
 const buildDecision = (request: StepOverrideRequest): StepControlResponse => ({
   action: request.action,
   reason: request.reason,
@@ -67,6 +159,10 @@ const matchPath = (pathname: string, expression: RegExp): RegExpMatchArray | nul
 
 const toApiRunStatus = (status: string): string => {
   switch (status) {
+    case 'created':
+      return 'created';
+    case 'queued':
+      return 'queued';
     case 'passed':
       return 'succeeded';
     case 'failed':
@@ -82,6 +178,7 @@ const toApiRun = (run: ControlPlaneRunRecord) => ({
   id: run.runId,
   tenant_id: run.tenantId,
   project_id: run.projectId,
+  name: run.name ?? undefined,
   status: toApiRunStatus(run.status),
   created_at: run.createdAt ?? run.startedAt ?? run.updatedAt ?? new Date().toISOString(),
   updated_at: run.updatedAt ?? run.createdAt ?? run.startedAt ?? new Date().toISOString(),
@@ -89,11 +186,16 @@ const toApiRun = (run: ControlPlaneRunRecord) => ({
     last_event_id: run.lastEventId,
     started_at: run.startedAt,
     finished_at: run.finishedAt,
+    mode: run.mode ?? undefined,
   },
 });
 
 const toApiRunItemStatus = (status: string): string => {
   switch (status) {
+    case 'pending':
+      return 'pending';
+    case 'dispatched':
+      return 'dispatched';
     case 'passed':
       return 'passed';
     case 'failed':
@@ -113,6 +215,12 @@ const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
   status: toApiRunItemStatus(runItem.status),
   attempt_no: runItem.attemptNo,
   artifacts: [],
+  summary: {
+    job_id: runItem.jobId,
+    job_kind: runItem.jobKind ?? undefined,
+    assigned_agent_id: runItem.assignedAgentId ?? undefined,
+    lease_token: runItem.leaseToken ?? undefined,
+  },
 });
 
 const toApiStepEvent = (stepEvent: ControlPlaneStepEventRecord) => ({
@@ -136,6 +244,37 @@ const toApiStepEvent = (stepEvent: ControlPlaneStepEventRecord) => ({
   received_at: stepEvent.receivedAt,
 });
 
+const toApiAgent = (agent: ControlPlaneAgentRecord) => ({
+  agent_id: agent.agentId,
+  tenant_id: agent.tenantId,
+  project_id: agent.projectId,
+  name: agent.name,
+  platform: agent.platform,
+  architecture: agent.architecture,
+  runtime_kind: agent.runtimeKind,
+  status: agent.status,
+  capabilities: agent.capabilities,
+  metadata: agent.metadata,
+  last_heartbeat_at: agent.lastHeartbeatAt,
+  created_at: agent.createdAt,
+  updated_at: agent.updatedAt,
+});
+
+const toApiLease = (lease: ControlPlaneJobLeaseRecord) => ({
+  lease_id: lease.leaseId,
+  lease_token: lease.leaseToken,
+  job_id: lease.jobId,
+  run_id: lease.runId,
+  run_item_id: lease.runItemId,
+  agent_id: lease.agentId,
+  attempt_no: lease.attemptNo,
+  status: lease.status,
+  acquired_at: lease.acquiredAt,
+  expires_at: lease.expiresAt,
+  heartbeat_at: lease.heartbeatAt,
+  released_at: lease.releasedAt,
+});
+
 const toPaginatedPayload = <T>(page: ControlPlanePage<T>, mapper: (item: T) => unknown) => ({
   items: page.items.map(mapper),
   next_cursor: page.nextCursor,
@@ -147,6 +286,16 @@ const requiredQuery = (url: URL, name: string): string => {
     throw new PaginationError(`${name} is required`);
   }
   return value;
+};
+
+const notSupported = (response: ServerResponse, capability: string): void => {
+  json(response, 501, {
+    error: {
+      code: 'NOT_SUPPORTED',
+      message: `${capability} requires a postgres-backed scheduling store`,
+      trace_id: 'local',
+    },
+  });
 };
 
 export interface StartControlPlaneServerOptions {
@@ -182,6 +331,143 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
             applied_at: migration.appliedAt,
           })),
         });
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/v1/internal/runs:enqueue-web') {
+        if (!store.enqueueWebRun) {
+          notSupported(response, 'enqueue-web');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isEnqueueWebRunRequest(body)) {
+          json(response, 400, { error: { code: 'INVALID_ENQUEUE_REQUEST', message: 'tenant_id, project_id, name, plan and env_profile are required', trace_id: 'local' } });
+          return;
+        }
+
+        const queued = await store.enqueueWebRun(normalizeEnqueueWebRun(body as unknown as Record<string, unknown>));
+        json(response, 201, {
+          run: toApiRun(queued.run),
+          run_item: toApiRunItem(queued.runItem),
+          job: queued.job,
+        });
+        return;
+      }
+
+      if (method === 'POST' && pathname === '/api/v1/internal/agents:register') {
+        if (!store.registerAgent) {
+          notSupported(response, 'agent registration');
+          return;
+        }
+
+        const body = await readJson<unknown>(request);
+        if (!isRegisterAgentRequest(body)) {
+          json(response, 400, { error: { code: 'INVALID_AGENT_REGISTRATION', message: 'agent_id, tenant_id, name, platform, architecture, runtime_kind and capabilities are required', trace_id: 'local' } });
+          return;
+        }
+
+        const agent = await store.registerAgent(normalizeRegisterAgent(body as unknown as Record<string, unknown>));
+        json(response, 200, toApiAgent(agent));
+        return;
+      }
+
+      const agentHeartbeatMatch = matchPath(pathname, /^\/api\/v1\/internal\/agents\/([^/]+):heartbeat$/);
+      if (method === 'POST' && agentHeartbeatMatch) {
+        if (!store.heartbeatAgent) {
+          notSupported(response, 'agent heartbeat');
+          return;
+        }
+
+        const [, agentId] = agentHeartbeatMatch;
+        const body = await readJson<unknown>(request);
+        if (!isHeartbeatAgentRequest(body)) {
+          json(response, 400, { error: { code: 'INVALID_AGENT_HEARTBEAT', message: 'invalid heartbeat payload', trace_id: 'local' } });
+          return;
+        }
+
+        const agent = await store.heartbeatAgent(agentId, normalizeHeartbeatAgent(body as Record<string, unknown>));
+        if (!agent) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'agent not found', trace_id: 'local' } });
+          return;
+        }
+
+        json(response, 200, toApiAgent(agent));
+        return;
+      }
+
+      const acquireLeaseMatch = matchPath(pathname, /^\/api\/v1\/internal\/agents\/([^/]+):acquire-lease$/);
+      if (method === 'POST' && acquireLeaseMatch) {
+        if (!store.acquireLease) {
+          notSupported(response, 'lease acquisition');
+          return;
+        }
+
+        const [, agentId] = acquireLeaseMatch;
+        const body = await readJson<unknown>(request);
+        if (!isAcquireLeaseRequest(body)) {
+          json(response, 400, { error: { code: 'INVALID_ACQUIRE_LEASE', message: 'supported_job_kinds and lease_ttl_seconds are required', trace_id: 'local' } });
+          return;
+        }
+
+        const lease = await store.acquireLease(agentId, normalizeAcquireLease(body as unknown as Record<string, unknown>));
+        if (!lease) {
+          json(response, 204);
+          return;
+        }
+
+        json(response, 200, {
+          lease: toApiLease(lease.lease),
+          job: lease.job,
+        });
+        return;
+      }
+
+      const heartbeatLeaseMatch = matchPath(pathname, /^\/api\/v1\/internal\/leases\/([^/]+):heartbeat$/);
+      if (method === 'POST' && heartbeatLeaseMatch) {
+        if (!store.heartbeatLease) {
+          notSupported(response, 'lease heartbeat');
+          return;
+        }
+
+        const [, leaseToken] = heartbeatLeaseMatch;
+        const body = await readJson<unknown>(request);
+        if (!isHeartbeatLeaseRequest(body)) {
+          json(response, 400, { error: { code: 'INVALID_LEASE_HEARTBEAT', message: 'lease_ttl_seconds is required', trace_id: 'local' } });
+          return;
+        }
+
+        const lease = await store.heartbeatLease(leaseToken, normalizeHeartbeatLease(body as unknown as Record<string, unknown>));
+        if (!lease) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'lease not found', trace_id: 'local' } });
+          return;
+        }
+
+        json(response, 200, toApiLease(lease));
+        return;
+      }
+
+      const completeLeaseMatch = matchPath(pathname, /^\/api\/v1\/internal\/leases\/([^/]+):complete$/);
+      if (method === 'POST' && completeLeaseMatch) {
+        if (!store.completeLease) {
+          notSupported(response, 'lease completion');
+          return;
+        }
+
+        const [, leaseToken] = completeLeaseMatch;
+        const body = await readJson<unknown>(request);
+        if (!isCompleteLeaseRequest(body)) {
+          json(response, 400, { error: { code: 'INVALID_LEASE_COMPLETION', message: 'status must be one of succeeded, failed, canceled', trace_id: 'local' } });
+          return;
+        }
+
+        const lease = await store.completeLease(leaseToken, body as ControlPlaneCompleteLeaseInput);
+        if (!lease) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'lease not found', trace_id: 'local' } });
+          return;
+        }
+
+        json(response, 200, toApiLease(lease));
         return;
       }
 

@@ -1,11 +1,11 @@
 # AI Web Testing Platform V2
 
-这个仓库当前以架构、契约和交付文档治理为先。
+这个仓库当前已经从纯规范仓库推进到“控制面 + agent + worker + PostgreSQL”最小调度系统原型。
 
 当前代码骨架：
 
-- `apps/web-worker`：Web 执行 worker，负责编译 DSL、启动浏览器会话、执行 step、回传结果
-- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、提供 step 决策接口，并支持 `inmemory`、`file`、`postgres` 三种存储模式；PostgreSQL 模式已具备正式 migration runner、`runs`、`run_items`、`step_events`、`step_decisions` 领域表投影，以及 `agents`、`job_leases`、`artifacts` 正式表
+- `apps/web-worker`：Web 执行 worker，负责编译 DSL、执行 step、回传结果，并提供轮询式 agent 主循环
+- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、step 决策、任务入队、agent 注册/心跳/租约获取与释放，并支持 `inmemory`、`file`、`postgres` 三种存储模式
 - `packages/web-dsl-schema`：源 DSL、编译后模型、执行结果类型
 - `packages/dsl-compiler`：DSL 编译器骨架
 - `packages/playwright-adapter`：Playwright 执行适配层与 step 执行引擎
@@ -31,11 +31,13 @@
 - `npm run typecheck`
 - `npm run control-plane:serve`
 - `npm run control-plane:migrate:postgres`
+- `npm run worker:agent`
 - `npm run playwright:install`
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
 - `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
-- `npm run smoke:control-plane:compose`：在容器化本地栈中验证 002 migration、分页读模型和 `run_id` 级 step events 查询
+- `npm run smoke:control-plane:compose`：在容器化本地栈中验证 migration、分页读模型和 `run_id` 级 step events 查询
+- `npm run smoke:scheduler:compose`：在容器化本地栈中验证 `control-plane -> agent -> worker -> runner-results -> PostgreSQL` 调度闭环
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`
@@ -48,6 +50,18 @@
 - `GET /api/v1/internal/run-items/{run_item_id}/step-events?limit=...&cursor=...`
 - `GET /api/v1/internal/migrations`
 
+当前控制面内部调度接口：
+
+- `POST /api/v1/internal/runs:enqueue-web`
+- `POST /api/v1/internal/agents:register`
+- `POST /api/v1/internal/agents/{agent_id}:heartbeat`
+- `POST /api/v1/internal/agents/{agent_id}:acquire-lease`
+- `POST /api/v1/internal/leases/{lease_token}:heartbeat`
+- `POST /api/v1/internal/leases/{lease_token}:complete`
+- `POST /api/v1/internal/runner-results`
+- `POST /api/v1/internal/jobs/{job_id}/steps/{source_step_id}:override`
+- `POST /api/v1/agent/jobs/{job_id}/steps/{source_step_id}:decide`
+
 容器化本地栈：
 
 - `docker compose build`
@@ -55,4 +69,5 @@
 - `docker compose run --rm tools npm run control-plane:migrate:postgres`
 - `docker compose up -d control-plane --wait`
 - `docker compose run --rm tools npm run smoke:control-plane:compose`
+- `docker compose run --rm tools npm run smoke:scheduler:compose`
 - `docker compose down -v`

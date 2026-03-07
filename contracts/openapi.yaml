@@ -377,6 +377,158 @@ paths:
                 $ref: "#/components/schemas/InternalMigrationListResponse"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/internal/runs:enqueue-web:
+    post:
+      tags: [Internal]
+      summary: Enqueue a single web job as a new run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalEnqueueWebRunRequest"
+      responses:
+        "201":
+          description: Created
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalQueuedWebRunResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/internal/agents:register:
+    post:
+      tags: [Internal]
+      summary: Register or upsert a worker agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalAgentRegistrationRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalAgent"
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/v1/internal/agents/{agent_id}:heartbeat:
+    post:
+      tags: [Internal]
+      summary: Update agent heartbeat and status
+      parameters:
+        - in: path
+          name: agent_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalAgentHeartbeatRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalAgent"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/agents/{agent_id}:acquire-lease:
+    post:
+      tags: [Internal]
+      summary: Acquire the next schedulable job lease for an agent
+      parameters:
+        - in: path
+          name: agent_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalAcquireLeaseRequest"
+      responses:
+        "200":
+          description: Lease acquired
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalAcquiredLeaseResponse"
+        "204":
+          description: No schedulable job available
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/leases/{lease_token}:heartbeat:
+    post:
+      tags: [Internal]
+      summary: Extend a currently held job lease
+      parameters:
+        - in: path
+          name: lease_token
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalLeaseHeartbeatRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalJobLease"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/leases/{lease_token}:complete:
+    post:
+      tags: [Internal]
+      summary: Mark a held job lease as completed, failed, or canceled
+      parameters:
+        - in: path
+          name: lease_token
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalLeaseCompletionRequest"
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalJobLease"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /api/v1/report-jobs:
     post:
       tags: [Reports]
@@ -807,3 +959,154 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/InternalMigration"
+    InternalEnqueueWebRunRequest:
+      type: object
+      required: [tenant_id, project_id, name, plan, env_profile]
+      properties:
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        mode: { type: string, minLength: 1 }
+        plan:
+          type: object
+          additionalProperties: true
+        env_profile:
+          type: object
+          additionalProperties: true
+        variable_context:
+          type: object
+          additionalProperties: true
+        trace_id: { type: string }
+        correlation_id: { type: string }
+    InternalQueuedWebRunResponse:
+      type: object
+      required: [run, run_item, job]
+      properties:
+        run:
+          $ref: "#/components/schemas/Run"
+        run_item:
+          $ref: "#/components/schemas/RunItem"
+        job:
+          type: object
+          additionalProperties: true
+    InternalAgentRegistrationRequest:
+      type: object
+      required: [agent_id, tenant_id, name, platform, architecture, runtime_kind, capabilities]
+      properties:
+        agent_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        platform: { type: string, minLength: 1 }
+        architecture: { type: string, minLength: 1 }
+        runtime_kind: { type: string, minLength: 1 }
+        capabilities:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1 }
+        metadata:
+          type: object
+          additionalProperties: true
+        status: { type: string }
+    InternalAgentHeartbeatRequest:
+      type: object
+      properties:
+        status: { type: string }
+        capabilities:
+          type: array
+          items: { type: string, minLength: 1 }
+        metadata:
+          type: object
+          additionalProperties: true
+    InternalAgent:
+      type: object
+      required:
+        - agent_id
+        - tenant_id
+        - name
+        - platform
+        - architecture
+        - runtime_kind
+        - status
+        - capabilities
+        - metadata
+        - created_at
+        - updated_at
+      properties:
+        agent_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        name: { type: string }
+        platform: { type: string }
+        architecture: { type: string }
+        runtime_kind: { type: string }
+        status: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+        last_heartbeat_at: { $ref: "#/components/schemas/ISO8601" }
+        created_at: { $ref: "#/components/schemas/ISO8601" }
+        updated_at: { $ref: "#/components/schemas/ISO8601" }
+    InternalAcquireLeaseRequest:
+      type: object
+      required: [supported_job_kinds, lease_ttl_seconds]
+      properties:
+        supported_job_kinds:
+          type: array
+          minItems: 1
+          items: { type: string, minLength: 1 }
+        lease_ttl_seconds:
+          type: integer
+          minimum: 1
+    InternalLeaseHeartbeatRequest:
+      type: object
+      required: [lease_ttl_seconds]
+      properties:
+        lease_ttl_seconds:
+          type: integer
+          minimum: 1
+    InternalLeaseCompletionRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [succeeded, failed, canceled]
+    InternalJobLease:
+      type: object
+      required:
+        - lease_id
+        - lease_token
+        - job_id
+        - run_id
+        - run_item_id
+        - agent_id
+        - attempt_no
+        - status
+        - acquired_at
+        - expires_at
+      properties:
+        lease_id: { type: integer, minimum: 1 }
+        lease_token: { type: string, minLength: 1 }
+        job_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        agent_id: { $ref: "#/components/schemas/UUID" }
+        attempt_no: { type: integer, minimum: 0 }
+        status: { type: string }
+        acquired_at: { $ref: "#/components/schemas/ISO8601" }
+        expires_at: { $ref: "#/components/schemas/ISO8601" }
+        heartbeat_at: { $ref: "#/components/schemas/ISO8601" }
+        released_at: { $ref: "#/components/schemas/ISO8601" }
+    InternalAcquiredLeaseResponse:
+      type: object
+      required: [lease, job]
+      properties:
+        lease:
+          $ref: "#/components/schemas/InternalJobLease"
+        job:
+          type: object
+          additionalProperties: true

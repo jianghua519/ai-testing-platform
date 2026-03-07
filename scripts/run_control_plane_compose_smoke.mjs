@@ -328,7 +328,7 @@ try {
   assertOk(decisionResponse.status === 200 && decisionResponse.body.action === 'replace', 'step decision did not return replace');
   assertOk(firstPost.status === 202, `first step post expected 202, got ${firstPost.status}`);
   assertOk(duplicatePost.status === 200 && duplicatePost.body?.duplicate === true, 'duplicate event was not deduplicated');
-  assertOk(migrationsPage.body.items.length === 2, `expected 2 migrations, got ${migrationsPage.body.items.length}`);
+  assertOk(migrationsPage.body.items.length === 3, `expected 3 migrations, got ${migrationsPage.body.items.length}`);
   assertOk(runsPage1.body.items.length === 2 && runsPage1.body.next_cursor, 'runs page 1 pagination failed');
   assertOk(runsPage2.body.items.length === 1, 'runs page 2 expected 1 item');
   assertOk(runItemPage1.body.items.length === 2 && runItemPage1.body.next_cursor, 'run items page 1 pagination failed');
