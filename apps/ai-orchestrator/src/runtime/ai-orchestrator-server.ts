@@ -5,7 +5,7 @@ import { AssistantGraphRuntime } from './assistant-graph.js';
 import type { AiOrchestratorConfig } from './config.js';
 import { loadAiOrchestratorConfig } from './config.js';
 import { createAiChatProvider } from './providers.js';
-import { InMemoryAssistantThreadStore } from './thread-store.js';
+import { createAssistantThreadStore } from './thread-store.js';
 
 class HttpError extends Error {
   readonly statusCode: number;
@@ -110,7 +110,7 @@ const projectThread = (thread: AssistantThread) => ({
 export const startAiOrchestratorServer = async (
   config: AiOrchestratorConfig = loadAiOrchestratorConfig(process.env),
 ): Promise<AiOrchestratorServer> => {
-  const threadStore = new InMemoryAssistantThreadStore({ maxFacts: config.memoryMaxFacts });
+  const threadStore = await createAssistantThreadStore(config);
   const provider = createAiChatProvider(config);
   const assistantGraph = new AssistantGraphRuntime({
     config,
@@ -130,12 +130,18 @@ export const startAiOrchestratorServer = async (
           service: 'ai-orchestrator',
           provider: provider.name,
           model: provider.model,
+          storeMode: threadStore.mode,
         });
         return;
       }
 
       if (method === 'POST' && pathname === '/api/v1/assistant/threads') {
-        const thread = threadStore.createThread(asCreateThreadInput(await readJsonBody(request)));
+        const payload = asCreateThreadInput(await readJsonBody(request));
+        if (threadStore.mode === 'postgres' && (!payload.tenantId?.trim() || !payload.projectId?.trim())) {
+          throw new HttpError(400, 'tenantId and projectId are required when AI_ORCHESTRATOR_STORE_MODE=postgres');
+        }
+
+        const thread = await threadStore.createThread(payload);
         sendJson(response, 201, {
           thread: projectThread(thread),
         });
@@ -144,7 +150,7 @@ export const startAiOrchestratorServer = async (
 
       const getThreadMatch = method === 'GET' ? matchThreadPath(pathname) : null;
       if (method === 'GET' && getThreadMatch) {
-        const thread = threadStore.getThread(getThreadMatch.threadId);
+        const thread = await threadStore.getThread(getThreadMatch.threadId);
         if (!thread) {
           throw new HttpError(404, `assistant thread not found: ${getThreadMatch.threadId}`);
         }
@@ -157,7 +163,7 @@ export const startAiOrchestratorServer = async (
 
       const postMessageMatch = method === 'POST' ? matchThreadMessagePath(pathname) : null;
       if (method === 'POST' && postMessageMatch) {
-        const thread = threadStore.getThread(postMessageMatch.threadId);
+        const thread = await threadStore.getThread(postMessageMatch.threadId);
         if (!thread) {
           throw new HttpError(404, `assistant thread not found: ${postMessageMatch.threadId}`);
         }
@@ -197,16 +203,19 @@ export const startAiOrchestratorServer = async (
   return {
     baseUrl: `http://127.0.0.1:${config.port}`,
     async close() {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
+      await Promise.all([
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
 
-          resolve();
-        });
-      });
+            resolve();
+          });
+        }),
+        threadStore.close(),
+      ]);
     },
   };
 };

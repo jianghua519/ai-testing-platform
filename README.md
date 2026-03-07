@@ -39,12 +39,14 @@
 - `npm install`
 - `npm run typecheck`
 - `npm run ai-orchestrator:serve`
+- `npm run ai-orchestrator:migrate:postgres`
 - `npm run control-plane:serve`
 - `npm run control-plane:artifacts:prune`
 - `npm run control-plane:migrate:postgres`
 - `npm run worker:agent`
 - `npm run playwright:install`
 - `npm run smoke:ai-orchestrator:mock`：验证 assistant thread / memory / chat API 与 LangGraph 最小编排闭环
+- `npm run smoke:ai-orchestrator:postgres:persistence`：验证 assistant thread / memory / chat API 已落到 PostgreSQL，并可在服务重启后继续读取
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
 - `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
@@ -57,7 +59,13 @@
 AI Orchestrator：
 
 - 当前新增 `apps/ai-orchestrator`，先落地 Phase 1 的最小能力：assistant thread、长期记忆提取、LangGraph turn 编排和 chat API
+- compose 环境下默认启用 `AI_ORCHESTRATOR_STORE_MODE=postgres`，assistant thread、message、memory fact 会落到 PostgreSQL
 - 模型提供方通过根目录 `.env` 配置，默认 `AI_PROVIDER=google`
+- 当前持久化相关环境变量：
+  - `AI_ORCHESTRATOR_STORE_MODE=memory|postgres`
+  - `AI_ORCHESTRATOR_DATABASE_URL`
+  - `AI_ORCHESTRATOR_RUN_MIGRATIONS=true|false`
+- 当 `AI_ORCHESTRATOR_STORE_MODE=postgres` 时，创建 thread 需要显式传 `tenantId` 和 `projectId`
 - 当前支持：
   - `AI_PROVIDER=google`，使用 `GOOGLE_API_KEY` 和 `AI_GOOGLE_MODEL`
   - `AI_PROVIDER=openai`，使用 `OPENAI_API_KEY`、`AI_OPENAI_MODEL`，可选 `AI_OPENAI_BASE_URL`
@@ -121,6 +129,7 @@ artifact 存储约定：
 - `docker compose run --rm tools npm run control-plane:migrate:postgres`
 - `AI_PROVIDER=mock docker compose up -d control-plane ai-orchestrator --wait`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:mock`
+- `docker compose exec -T tools npm run smoke:ai-orchestrator:postgres:persistence`
 - `docker compose run --rm tools npm run smoke:control-plane:compose`
 - `docker compose run --rm tools npm run smoke:scheduler:compose`
 - `docker compose run --rm tools npm run control-plane:artifacts:prune`

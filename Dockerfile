@@ -23,7 +23,6 @@ COPY scripts ./scripts
 COPY contracts ./contracts
 COPY docs ./docs
 COPY README.md ./
-COPY .env.example ./
 RUN npm run build
 
 EXPOSE 8080

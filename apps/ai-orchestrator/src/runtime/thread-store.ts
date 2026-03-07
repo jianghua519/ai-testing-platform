@@ -7,10 +7,22 @@ import type {
   AssistantThread,
   CreateAssistantThreadInput,
 } from '../types.js';
+import type { AiOrchestratorConfig } from './config.js';
+import { PostgresAssistantThreadStore } from './postgres-thread-store.js';
 
 const clone = <T>(value: T): T => structuredClone(value);
 
-export class InMemoryAssistantThreadStore {
+export interface AssistantThreadStore {
+  readonly mode: 'memory' | 'postgres';
+  createThread(input?: CreateAssistantThreadInput): Promise<AssistantThread>;
+  getThread(threadId: string): Promise<AssistantThread | null>;
+  appendMessage(threadId: string, role: AssistantMessageRole, content: string): Promise<AssistantMessage>;
+  rememberFacts(threadId: string, sourceMessageId: string, factContents: string[]): Promise<AssistantMemoryFact[]>;
+  close(): Promise<void>;
+}
+
+export class InMemoryAssistantThreadStore implements AssistantThreadStore {
+  readonly mode = 'memory' as const;
   readonly #threads = new Map<string, AssistantThread>();
   readonly #maxFacts: number;
 
@@ -18,7 +30,7 @@ export class InMemoryAssistantThreadStore {
     this.#maxFacts = options?.maxFacts ?? 32;
   }
 
-  createThread(input: CreateAssistantThreadInput = {}): AssistantThread {
+  async createThread(input: CreateAssistantThreadInput = {}): Promise<AssistantThread> {
     const timestamp = new Date().toISOString();
     const thread: AssistantThread = {
       id: randomUUID(),
@@ -37,12 +49,12 @@ export class InMemoryAssistantThreadStore {
     return clone(thread);
   }
 
-  getThread(threadId: string): AssistantThread | null {
+  async getThread(threadId: string): Promise<AssistantThread | null> {
     const thread = this.#threads.get(threadId);
     return thread ? clone(thread) : null;
   }
 
-  appendMessage(threadId: string, role: AssistantMessageRole, content: string): AssistantMessage {
+  async appendMessage(threadId: string, role: AssistantMessageRole, content: string): Promise<AssistantMessage> {
     const thread = this.#getMutableThread(threadId);
     const message: AssistantMessage = {
       id: randomUUID(),
@@ -57,7 +69,7 @@ export class InMemoryAssistantThreadStore {
     return clone(message);
   }
 
-  rememberFacts(threadId: string, sourceMessageId: string, factContents: string[]): AssistantMemoryFact[] {
+  async rememberFacts(threadId: string, sourceMessageId: string, factContents: string[]): Promise<AssistantMemoryFact[]> {
     const thread = this.#getMutableThread(threadId);
     const createdFacts: AssistantMemoryFact[] = [];
 
@@ -101,6 +113,8 @@ export class InMemoryAssistantThreadStore {
     return createdFacts;
   }
 
+  async close(): Promise<void> {}
+
   #getMutableThread(threadId: string): AssistantThread {
     const thread = this.#threads.get(threadId);
     if (!thread) {
@@ -110,3 +124,13 @@ export class InMemoryAssistantThreadStore {
     return thread;
   }
 }
+
+export const createAssistantThreadStore = async (config: AiOrchestratorConfig): Promise<AssistantThreadStore> => {
+  if (config.storeMode === 'postgres') {
+    const store = new PostgresAssistantThreadStore(config);
+    await store.initialize();
+    return store;
+  }
+
+  return new InMemoryAssistantThreadStore({ maxFacts: config.memoryMaxFacts });
+};

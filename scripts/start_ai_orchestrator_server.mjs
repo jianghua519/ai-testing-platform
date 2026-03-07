@@ -11,6 +11,7 @@ const server = await startAiOrchestratorServer(config);
 console.log(JSON.stringify({
   status: 'listening',
   baseUrl: server.baseUrl,
+  storeMode: config.storeMode,
   provider: config.provider,
   model: config.provider === 'google' ? config.googleModel : config.provider === 'openai' ? config.openaiModel : 'mock-deterministic',
 }, null, 2));

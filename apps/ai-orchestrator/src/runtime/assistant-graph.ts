@@ -3,7 +3,7 @@ import { END, START, StateGraph } from '@langchain/langgraph';
 import type { AssistantMessage, AssistantThread, AssistantTurnResult } from '../types.js';
 import type { AiOrchestratorConfig } from './config.js';
 import type { AiChatProvider } from './providers.js';
-import { InMemoryAssistantThreadStore } from './thread-store.js';
+import type { AssistantThreadStore } from './thread-store.js';
 
 interface AssistantTurnState {
   threadId: string;
@@ -75,12 +75,12 @@ export class AssistantGraphRuntime {
   readonly #compiledGraph;
   readonly #config: AiOrchestratorConfig;
   readonly #provider: AiChatProvider;
-  readonly #threadStore: InMemoryAssistantThreadStore;
+  readonly #threadStore: AssistantThreadStore;
 
   constructor(options: {
     config: AiOrchestratorConfig;
     provider: AiChatProvider;
-    threadStore: InMemoryAssistantThreadStore;
+    threadStore: AssistantThreadStore;
   }) {
     this.#config = options.config;
     this.#provider = options.provider;
@@ -88,7 +88,7 @@ export class AssistantGraphRuntime {
 
     this.#compiledGraph = createAssistantStateGraph()
       .addNode('loadThread', async (state) => {
-        const thread = this.#threadStore.getThread(state.threadId);
+        const thread = await this.#threadStore.getThread(state.threadId);
         if (!thread) {
           throw new Error(`assistant thread not found: ${state.threadId}`);
         }
@@ -96,8 +96,8 @@ export class AssistantGraphRuntime {
         return { thread };
       })
       .addNode('persistUserMessage', async (state) => {
-        const userMessage = this.#threadStore.appendMessage(state.threadId, 'user', state.userInput);
-        const thread = this.#threadStore.getThread(state.threadId);
+        const userMessage = await this.#threadStore.appendMessage(state.threadId, 'user', state.userInput);
+        const thread = await this.#threadStore.getThread(state.threadId);
         if (!thread) {
           throw new Error(`assistant thread not found after user message append: ${state.threadId}`);
         }
@@ -112,13 +112,13 @@ export class AssistantGraphRuntime {
 
         const extractedFacts = extractRememberedFacts(userMessage.content);
         if (extractedFacts.length > 0) {
-          this.#threadStore.rememberFacts(state.threadId, userMessage.id, extractedFacts);
+          await this.#threadStore.rememberFacts(state.threadId, userMessage.id, extractedFacts);
         }
 
-        return { extractedFacts, thread: this.#threadStore.getThread(state.threadId) };
+        return { extractedFacts, thread: await this.#threadStore.getThread(state.threadId) };
       })
       .addNode('callModel', async (state) => {
-        const thread = this.#threadStore.getThread(state.threadId);
+        const thread = await this.#threadStore.getThread(state.threadId);
         if (!thread) {
           throw new Error(`assistant thread not found before model call: ${state.threadId}`);
         }
@@ -136,8 +136,8 @@ export class AssistantGraphRuntime {
           throw new Error('assistant reply is empty');
         }
 
-        this.#threadStore.appendMessage(state.threadId, 'assistant', state.reply);
-        const thread = this.#threadStore.getThread(state.threadId);
+        await this.#threadStore.appendMessage(state.threadId, 'assistant', state.reply);
+        const thread = await this.#threadStore.getThread(state.threadId);
         if (!thread) {
           throw new Error(`assistant thread not found after assistant message append: ${state.threadId}`);
         }
@@ -163,7 +163,7 @@ export class AssistantGraphRuntime {
       reply: null,
     });
 
-    const thread = this.#threadStore.getThread(threadId);
+    const thread = await this.#threadStore.getThread(threadId);
     if (!thread) {
       throw new Error(`assistant thread not found after graph invoke: ${threadId}`);
     }
