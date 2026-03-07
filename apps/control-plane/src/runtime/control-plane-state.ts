@@ -1,5 +1,15 @@
-import type { ControlPlaneStateSnapshot, ControlPlaneStore, RecordedRunnerEvent, RunnerResultEnvelope } from '../types.js';
+import type {
+  ControlPlaneMigrationRecord,
+  ControlPlaneRunItemRecord,
+  ControlPlaneRunRecord,
+  ControlPlaneStateSnapshot,
+  ControlPlaneStepEventRecord,
+  ControlPlaneStore,
+  RecordedRunnerEvent,
+  RunnerResultEnvelope,
+} from '../types.js';
 import type { StepControlResponse } from '@aiwtp/web-worker';
+import { buildControlPlaneProjections } from './projection-utils.js';
 
 const toNestedRecord = <T>(source: Map<string, Map<string, T[]>>): Record<string, Record<string, T[]>> => {
   const target: Record<string, Record<string, T[]>> = {};
@@ -87,11 +97,31 @@ export class InMemoryControlPlaneState implements ControlPlaneStore {
     return decision;
   }
 
+  async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
+    return [];
+  }
+
+  async getRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    return this.buildProjections().runsById.get(runId);
+  }
+
+  async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
+    return this.buildProjections().runItemsById.get(runItemId);
+  }
+
+  async listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]> {
+    return [...(this.buildProjections().stepEventsByRunItemId.get(runItemId) ?? [])];
+  }
+
   async snapshot(): Promise<ControlPlaneStateSnapshot> {
     return {
       eventsByJob: Object.fromEntries(Array.from(this.eventsByJob.entries()).map(([jobId, items]) => [jobId, [...items]])),
       pendingDecisionsByJob: toNestedRecord(this.pendingDecisionsByJob),
       receivedEventIds: [...this.receivedEventIds],
     };
+  }
+
+  private buildProjections() {
+    return buildControlPlaneProjections(Array.from(this.eventsByJob.values()).flat());
   }
 }

@@ -8,6 +8,7 @@
   "scripts": {
     "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter apps/web-worker apps/control-plane",
     "build": "npm run typecheck",
+    "control-plane:migrate:postgres": "npm run build && node ./scripts/migrate_control_plane_postgres.mjs",
     "playwright:install": "playwright install chromium",
     "smoke:web:real": "npm run build && node ./scripts/run_real_browser_smoke.mjs",
     "smoke:control-plane:postgres": "npm run build && node ./scripts/run_control_plane_postgres_smoke.mjs",

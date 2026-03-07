@@ -305,6 +305,44 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/run-items/{run_item_id}/step-events:
+    get:
+      tags: [Internal]
+      summary: List projected step execution events for a run item
+      parameters:
+        - in: path
+          name: run_item_id
+          required: true
+          schema: { $ref: "#/components/schemas/UUID" }
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalStepEventListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/migrations:
+    get:
+      tags: [Internal]
+      summary: List applied control-plane schema migrations
+      responses:
+        "200":
+          description: OK
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalMigrationListResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/report-jobs:
     post:
       tags: [Reports]
@@ -662,3 +700,74 @@ components:
           items:
             type: object
             additionalProperties: true
+    InternalStepEvent:
+      type: object
+      required:
+        - event_id
+        - run_id
+        - run_item_id
+        - job_id
+        - tenant_id
+        - project_id
+        - attempt_no
+        - compiled_step_id
+        - source_step_id
+        - status
+        - started_at
+        - finished_at
+        - duration_ms
+        - artifacts
+        - extracted_variables
+        - received_at
+      properties:
+        event_id: { $ref: "#/components/schemas/UUID" }
+        run_id: { $ref: "#/components/schemas/UUID" }
+        run_item_id: { $ref: "#/components/schemas/UUID" }
+        job_id: { $ref: "#/components/schemas/UUID" }
+        tenant_id: { $ref: "#/components/schemas/UUID" }
+        project_id: { $ref: "#/components/schemas/UUID" }
+        attempt_no: { type: integer, minimum: 0 }
+        compiled_step_id: { type: string, minLength: 1 }
+        source_step_id: { type: string, minLength: 1 }
+        status:
+          type: string
+          enum: [passed, failed, skipped]
+        started_at: { $ref: "#/components/schemas/ISO8601" }
+        finished_at: { $ref: "#/components/schemas/ISO8601" }
+        duration_ms: { type: integer, minimum: 0 }
+        error_code: { type: string }
+        error_message: { type: string }
+        artifacts:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        extracted_variables:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        received_at: { $ref: "#/components/schemas/ISO8601" }
+    InternalStepEventListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InternalStepEvent"
+    InternalMigration:
+      type: object
+      required: [version, checksum, applied_at]
+      properties:
+        version: { type: string, minLength: 1 }
+        checksum: { type: string, minLength: 1 }
+        applied_at: { $ref: "#/components/schemas/ISO8601" }
+    InternalMigrationListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InternalMigration"

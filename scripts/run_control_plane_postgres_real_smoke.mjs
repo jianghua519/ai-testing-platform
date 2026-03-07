@@ -6,6 +6,7 @@ import { Pool } from 'pg';
 import EmbeddedPostgres from 'embedded-postgres';
 import {
   PostgresControlPlaneStore,
+  runControlPlanePostgresMigrations,
   startControlPlaneServer,
 } from '../apps/control-plane/dist/index.js';
 import {
@@ -177,11 +178,14 @@ const main = async () => {
     const jobEnvelope = envelopeFactory.buildJobResult(jobResult);
 
     firstPool = new Pool({ connectionString });
-    firstStore = await PostgresControlPlaneStore.open({ pool: firstPool, autoMigrate: true });
+    firstPool.on('error', () => {});
+    const appliedMigrations = await runControlPlanePostgresMigrations(firstPool);
+    firstStore = await PostgresControlPlaneStore.open({ pool: firstPool, runMigrations: false });
     firstServer = await startControlPlaneServer({ store: firstStore });
 
     const health = await fetch(`${firstServer.baseUrl}/healthz`).then((response) => response.json());
     const databaseSummary = await readDatabaseSummary(firstPool);
+    const migrationsPayload = await fetch(`${firstServer.baseUrl}/api/v1/internal/migrations`).then((response) => response.json());
 
     const enqueueResponse = await fetch(`${firstServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/steps/${replacementStep.sourceStepId}:override`, {
       method: 'POST',
@@ -229,7 +233,12 @@ const main = async () => {
       body: JSON.stringify(jobEnvelope),
     });
 
-    const eventsPayload = await fetch(`${firstServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/events`).then((response) => response.json());
+    const [eventsPayload, runPayload, runItemPayload, stepEventsPayload] = await Promise.all([
+      fetch(`${firstServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/events`).then((response) => response.json()),
+      fetch(`${firstServer.baseUrl}/api/v1/runs/${fixture.runId}`).then((response) => response.json()),
+      fetch(`${firstServer.baseUrl}/api/v1/run-items/${fixture.runItemId}`).then((response) => response.json()),
+      fetch(`${firstServer.baseUrl}/api/v1/internal/run-items/${fixture.runItemId}/step-events`).then((response) => response.json()),
+    ]);
     const domainSummary = await readDomainSummary(firstPool, fixture);
 
     await firstServer.close();
@@ -243,10 +252,17 @@ const main = async () => {
     await postgres.start();
 
     secondPool = new Pool({ connectionString });
-    secondStore = await PostgresControlPlaneStore.open({ pool: secondPool, autoMigrate: false });
+    secondPool.on('error', () => {});
+    secondStore = await PostgresControlPlaneStore.open({ pool: secondPool, runMigrations: false });
     secondServer = await startControlPlaneServer({ store: secondStore });
 
-    const restoredEventsPayload = await fetch(`${secondServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/events`).then((response) => response.json());
+    const [restoredEventsPayload, restoredRunPayload, restoredRunItemPayload, restoredStepEventsPayload, restoredMigrationsPayload] = await Promise.all([
+      fetch(`${secondServer.baseUrl}/api/v1/internal/jobs/${fixture.jobId}/events`).then((response) => response.json()),
+      fetch(`${secondServer.baseUrl}/api/v1/runs/${fixture.runId}`).then((response) => response.json()),
+      fetch(`${secondServer.baseUrl}/api/v1/run-items/${fixture.runItemId}`).then((response) => response.json()),
+      fetch(`${secondServer.baseUrl}/api/v1/internal/run-items/${fixture.runItemId}/step-events`).then((response) => response.json()),
+      fetch(`${secondServer.baseUrl}/api/v1/internal/migrations`).then((response) => response.json()),
+    ]);
     const restoredDomainSummary = await readDomainSummary(secondPool, fixture);
     const restoredDatabaseSummary = await readDatabaseSummary(secondPool);
     const snapshot = await secondStore.snapshot();
@@ -254,6 +270,8 @@ const main = async () => {
     console.log(JSON.stringify({
       health,
       databaseSummary,
+      appliedMigrationVersions: appliedMigrations.map((item) => item.version),
+      migrationsCount: migrationsPayload.items.length,
       overrideAccepted: enqueueResponse.status === 202,
       decisionAction: decisionPayload.action,
       replacementSourceStepId: decisionPayload.replacement_step?.sourceStepId ?? null,
@@ -262,8 +280,16 @@ const main = async () => {
       duplicateBody: await duplicatePost.json(),
       jobPostStatus: jobPost.status,
       eventTypes: eventsPayload.items.map((item) => item.envelope.event_type),
+      runApiStatus: runPayload.status,
+      runItemApiStatus: runItemPayload.status,
+      stepEventApiCount: stepEventsPayload.items.length,
+      stepEventApiStepIds: stepEventsPayload.items.map((item) => item.sourceStepId),
       domainSummary,
       restoredEventCount: restoredEventsPayload.items.length,
+      restoredRunApiStatus: restoredRunPayload.status,
+      restoredRunItemApiStatus: restoredRunItemPayload.status,
+      restoredStepEventApiCount: restoredStepEventsPayload.items.length,
+      restoredMigrationsCount: restoredMigrationsPayload.items.length,
       restoredDomainSummary,
       restoredDatabaseSummary,
       snapshotJobIds: Object.keys(snapshot.eventsByJob),

@@ -1,6 +1,10 @@
 import { Pool } from 'pg';
 import type {
+  ControlPlaneMigrationRecord,
+  ControlPlaneRunItemRecord,
+  ControlPlaneRunRecord,
   ControlPlaneStateSnapshot,
+  ControlPlaneStepEventRecord,
   ControlPlaneStore,
   RecordedRunnerEvent,
   RecordRunnerEventResult,
@@ -9,11 +13,13 @@ import type {
 import type { CompiledStep } from '@aiwtp/web-dsl-schema';
 import type {
   ResultReportedEnvelope,
-  StepResultPayload,
   StepResultReportedEnvelope,
   StepControlResponse,
 } from '@aiwtp/web-worker';
-import { CONTROL_PLANE_POSTGRES_SCHEMA_SQL } from './postgres-schema.js';
+import {
+  listControlPlanePostgresMigrations,
+  runControlPlanePostgresMigrations,
+} from './postgres-migrations.js';
 
 interface SqlQueryResult<Row> {
   rows: Row[];
@@ -54,24 +60,63 @@ interface SnapshotDecisionRow {
   resume_after_ms: number | null;
 }
 
-interface RunRow {
-  run_id: string;
-  status: string;
-}
-
-interface RunItemRow {
-  run_item_id: string;
-  status: string;
-}
-
 interface StepDecisionLookupRow {
   run_id: string;
   run_item_id: string;
 }
 
+interface RunProjectionRow {
+  run_id: string;
+  tenant_id: string;
+  project_id: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  last_event_id: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+interface RunItemProjectionRow {
+  run_item_id: string;
+  run_id: string;
+  job_id: string;
+  tenant_id: string;
+  project_id: string;
+  attempt_no: number;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  last_event_id: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+interface StepEventProjectionRow {
+  event_id: string;
+  run_id: string;
+  run_item_id: string;
+  job_id: string;
+  tenant_id: string;
+  project_id: string;
+  attempt_no: number;
+  compiled_step_id: string;
+  source_step_id: string;
+  status: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  error_code: string | null;
+  error_message: string | null;
+  artifacts_json: unknown[] | string;
+  extracted_variables_json: unknown[] | string;
+  received_at: string;
+}
+
 export interface PostgresControlPlaneStoreOptions {
   connectionString?: string;
   pool?: SqlPoolLike;
+  runMigrations?: boolean;
   autoMigrate?: boolean;
 }
 
@@ -177,6 +222,54 @@ const upsertProjectionStatusSql = (tableName: 'runs' | 'run_items', keyField: 'r
     updated_at = now()
 `;
 
+const mapRunProjection = (row: RunProjectionRow): ControlPlaneRunRecord => ({
+  runId: row.run_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  status: row.status,
+  startedAt: row.started_at,
+  finishedAt: row.finished_at,
+  lastEventId: row.last_event_id,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapRunItemProjection = (row: RunItemProjectionRow): ControlPlaneRunItemRecord => ({
+  runItemId: row.run_item_id,
+  runId: row.run_id,
+  jobId: row.job_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  attemptNo: row.attempt_no,
+  status: row.status,
+  startedAt: row.started_at,
+  finishedAt: row.finished_at,
+  lastEventId: row.last_event_id,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapStepEventProjection = (row: StepEventProjectionRow): ControlPlaneStepEventRecord => ({
+  eventId: row.event_id,
+  runId: row.run_id,
+  runItemId: row.run_item_id,
+  jobId: row.job_id,
+  tenantId: row.tenant_id,
+  projectId: row.project_id,
+  attemptNo: row.attempt_no,
+  compiledStepId: row.compiled_step_id,
+  sourceStepId: row.source_step_id,
+  status: row.status,
+  startedAt: row.started_at,
+  finishedAt: row.finished_at,
+  durationMs: row.duration_ms,
+  errorCode: row.error_code,
+  errorMessage: row.error_message,
+  artifacts: parseJsonColumn<unknown[]>(row.artifacts_json) ?? [],
+  extractedVariables: parseJsonColumn<unknown[]>(row.extracted_variables_json) ?? [],
+  receivedAt: row.received_at,
+});
+
 export class PostgresControlPlaneStore implements ControlPlaneStore {
   private constructor(
     private readonly pool: SqlPoolLike,
@@ -186,10 +279,19 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
   static async open(options: PostgresControlPlaneStoreOptions = {}): Promise<PostgresControlPlaneStore> {
     const pool = options.pool ?? new Pool({ connectionString: options.connectionString });
     const store = new PostgresControlPlaneStore(pool, !options.pool);
-    if (options.autoMigrate !== false) {
-      await store.ensureSchema();
+    const shouldRunMigrations = options.runMigrations ?? options.autoMigrate ?? true;
+    if (shouldRunMigrations) {
+      await store.runMigrations();
     }
     return store;
+  }
+
+  async runMigrations(): Promise<ControlPlaneMigrationRecord[]> {
+    return runControlPlanePostgresMigrations(this.pool);
+  }
+
+  async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
+    return listControlPlanePostgresMigrations(this.pool);
   }
 
   async recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult> {
@@ -267,10 +369,13 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       [jobId],
     );
 
-    return result.rows.map((row) => ({
-      receivedAt: parseJsonColumn<RunnerResultEnvelope>(row.envelope_json)?.occurred_at ?? new Date().toISOString(),
-      envelope: parseJsonColumn<RunnerResultEnvelope>(row.envelope_json) as RunnerResultEnvelope,
-    }));
+    return result.rows.map((row) => {
+      const envelope = parseJsonColumn<RunnerResultEnvelope>(row.envelope_json) as RunnerResultEnvelope;
+      return {
+        receivedAt: envelope.occurred_at,
+        envelope,
+      };
+    });
   }
 
   async enqueueStepDecision(jobId: string, sourceStepId: string, decision: StepControlResponse): Promise<void> {
@@ -351,6 +456,40 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
     }
   }
 
+  async getRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    const result = await this.pool.query<RunProjectionRow>(
+      `select run_id, tenant_id, project_id, status, started_at, finished_at, last_event_id, created_at, updated_at
+       from runs
+       where run_id = $1
+       limit 1`,
+      [runId],
+    );
+    return result.rows[0] ? mapRunProjection(result.rows[0]) : undefined;
+  }
+
+  async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
+    const result = await this.pool.query<RunItemProjectionRow>(
+      `select run_item_id, run_id, job_id, tenant_id, project_id, attempt_no, status, started_at, finished_at, last_event_id, created_at, updated_at
+       from run_items
+       where run_item_id = $1
+       limit 1`,
+      [runItemId],
+    );
+    return result.rows[0] ? mapRunItemProjection(result.rows[0]) : undefined;
+  }
+
+  async listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]> {
+    const result = await this.pool.query<StepEventProjectionRow>(
+      `select event_id, run_id, run_item_id, job_id, tenant_id, project_id, attempt_no, compiled_step_id, source_step_id, status,
+              started_at, finished_at, duration_ms, error_code, error_message, artifacts_json, extracted_variables_json, received_at
+       from step_events
+       where run_item_id = $1
+       order by received_at asc, event_id asc`,
+      [runItemId],
+    );
+    return result.rows.map(mapStepEventProjection);
+  }
+
   async snapshot(): Promise<ControlPlaneStateSnapshot> {
     const [eventsResult, decisionsResult] = await Promise.all([
       this.pool.query<RunnerEventRow>(
@@ -391,10 +530,6 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       pendingDecisionsByJob,
       receivedEventIds: eventsResult.rows.map((row) => row.event_id),
     };
-  }
-
-  async ensureSchema(): Promise<void> {
-    await this.pool.query(CONTROL_PLANE_POSTGRES_SCHEMA_SQL);
   }
 
   async close(): Promise<void> {

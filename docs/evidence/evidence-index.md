@@ -53,3 +53,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-07`: `docs/evidence/records/20260307-101158-control-plane-evidence.md` - control-plane领域模型表扩展 的测试举证记录。
 
 - `2026-03-07`: `docs/evidence/records/20260307-102523-postgresql-evidence.md` - 外部 PostgreSQL 实例验证 的测试举证记录。
+
+- `2026-03-07`: `docs/evidence/records/20260307-103640-control-plane-migration-evidence.md` - control-plane正式migration体系和查询接口骨架 的测试举证记录。

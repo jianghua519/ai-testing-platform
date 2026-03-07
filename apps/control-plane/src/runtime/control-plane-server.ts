@@ -2,7 +2,15 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
-import type { ControlPlaneServer, ControlPlaneStore, JobEventsResponse, RunnerResultEnvelope, StepOverrideRequest } from '../types.js';
+import type {
+  ControlPlaneRunItemRecord,
+  ControlPlaneRunRecord,
+  ControlPlaneServer,
+  ControlPlaneStore,
+  JobEventsResponse,
+  RunnerResultEnvelope,
+  StepOverrideRequest,
+} from '../types.js';
 import type { StepControlRequest, StepControlResponse } from '@aiwtp/web-worker';
 import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js';
 
@@ -54,6 +62,56 @@ const buildDecision = (request: StepOverrideRequest): StepControlResponse => ({
 
 const matchPath = (pathname: string, expression: RegExp): RegExpMatchArray | null => pathname.match(expression);
 
+const toApiRunStatus = (status: string): string => {
+  switch (status) {
+    case 'passed':
+      return 'succeeded';
+    case 'failed':
+      return 'failed';
+    case 'canceled':
+      return 'canceled';
+    default:
+      return 'running';
+  }
+};
+
+const toApiRun = (run: ControlPlaneRunRecord) => ({
+  id: run.runId,
+  tenant_id: run.tenantId,
+  project_id: run.projectId,
+  status: toApiRunStatus(run.status),
+  created_at: run.createdAt ?? run.startedAt ?? run.updatedAt ?? new Date().toISOString(),
+  updated_at: run.updatedAt ?? run.createdAt ?? run.startedAt ?? new Date().toISOString(),
+  summary: {
+    last_event_id: run.lastEventId,
+    started_at: run.startedAt,
+    finished_at: run.finishedAt,
+  },
+});
+
+const toApiRunItemStatus = (status: string): string => {
+  switch (status) {
+    case 'passed':
+      return 'passed';
+    case 'failed':
+      return 'failed';
+    case 'canceled':
+      return 'canceled';
+    default:
+      return 'running';
+  }
+};
+
+const toApiRunItem = (runItem: ControlPlaneRunItemRecord) => ({
+  id: runItem.runItemId,
+  run_id: runItem.runId,
+  tenant_id: runItem.tenantId,
+  project_id: runItem.projectId,
+  status: toApiRunItemStatus(runItem.status),
+  attempt_no: runItem.attemptNo,
+  artifacts: [],
+});
+
 export interface StartControlPlaneServerOptions {
   port?: number;
   hostname?: string;
@@ -76,6 +134,11 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
 
       if (method === 'GET' && pathname === '/healthz') {
         json(response, 200, { status: 'ok' });
+        return;
+      }
+
+      if (method === 'GET' && pathname === '/api/v1/internal/migrations') {
+        json(response, 200, { items: await store.listAppliedMigrations() });
         return;
       }
 
@@ -131,6 +194,37 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           items: await store.listJobEvents(jobId),
         };
         json(response, 200, payload);
+        return;
+      }
+
+      const runMatch = matchPath(pathname, /^\/api\/v1\/runs\/([^/]+)$/);
+      if (method === 'GET' && runMatch) {
+        const [, runId] = runMatch;
+        const run = await store.getRun(runId);
+        if (!run) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiRun(run));
+        return;
+      }
+
+      const runItemMatch = matchPath(pathname, /^\/api\/v1\/run-items\/([^/]+)$/);
+      if (method === 'GET' && runItemMatch) {
+        const [, runItemId] = runItemMatch;
+        const runItem = await store.getRunItem(runItemId);
+        if (!runItem) {
+          json(response, 404, { error: { code: 'NOT_FOUND', message: 'run item not found', trace_id: 'local' } });
+          return;
+        }
+        json(response, 200, toApiRunItem(runItem));
+        return;
+      }
+
+      const stepEventsMatch = matchPath(pathname, /^\/api\/v1\/internal\/run-items\/([^/]+)\/step-events$/);
+      if (method === 'GET' && stepEventsMatch) {
+        const [, runItemId] = stepEventsMatch;
+        json(response, 200, { items: await store.listStepEvents(runItemId) });
         return;
       }
 

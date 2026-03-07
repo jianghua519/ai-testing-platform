@@ -5,7 +5,7 @@
 当前代码骨架：
 
 - `apps/web-worker`：Web 执行 worker，负责编译 DSL、启动浏览器会话、执行 step、回传结果
-- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、提供 step 决策接口，并支持 `inmemory`、`file`、`postgres` 三种存储模式；PostgreSQL 模式已具备 `runs`、`run_items`、`step_events`、`step_decisions` 领域表投影
+- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、提供 step 决策接口，并支持 `inmemory`、`file`、`postgres` 三种存储模式；PostgreSQL 模式已具备正式 migration runner、`runs`、`run_items`、`step_events`、`step_decisions` 领域表投影，以及最小查询接口骨架
 - `packages/web-dsl-schema`：源 DSL、编译后模型、执行结果类型
 - `packages/dsl-compiler`：DSL 编译器骨架
 - `packages/playwright-adapter`：Playwright 执行适配层与 step 执行引擎
@@ -29,10 +29,11 @@
 - `bash ./scripts/validate_docs.sh`
 - `npm install`
 - `npm run typecheck`
+- `npm run control-plane:migrate:postgres`
 - `npm run playwright:install`
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
-- `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程）
+- `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造"`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git`
 - `bash ./scripts/create_delivery_bundle.sh "请做登录能力改造" --git --push`

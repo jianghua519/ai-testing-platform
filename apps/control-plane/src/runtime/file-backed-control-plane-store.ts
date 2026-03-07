@@ -1,7 +1,17 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { InMemoryControlPlaneState } from './control-plane-state.js';
-import type { ControlPlaneStateSnapshot, ControlPlaneStore, RecordedRunnerEvent, RecordRunnerEventResult, RunnerResultEnvelope } from '../types.js';
+import type {
+  ControlPlaneMigrationRecord,
+  ControlPlaneRunItemRecord,
+  ControlPlaneRunRecord,
+  ControlPlaneStateSnapshot,
+  ControlPlaneStepEventRecord,
+  ControlPlaneStore,
+  RecordedRunnerEvent,
+  RecordRunnerEventResult,
+  RunnerResultEnvelope,
+} from '../types.js';
 import type { StepControlResponse } from '@aiwtp/web-worker';
 
 interface PersistedControlPlaneStateFile extends ControlPlaneStateSnapshot {
@@ -56,6 +66,22 @@ export class FileBackedControlPlaneStore implements ControlPlaneStore {
       await this.persist();
     }
     return decision;
+  }
+
+  async listAppliedMigrations(): Promise<ControlPlaneMigrationRecord[]> {
+    return this.memoryStore.listAppliedMigrations();
+  }
+
+  async getRun(runId: string): Promise<ControlPlaneRunRecord | undefined> {
+    return this.memoryStore.getRun(runId);
+  }
+
+  async getRunItem(runItemId: string): Promise<ControlPlaneRunItemRecord | undefined> {
+    return this.memoryStore.getRunItem(runItemId);
+  }
+
+  async listStepEvents(runItemId: string): Promise<ControlPlaneStepEventRecord[]> {
+    return this.memoryStore.listStepEvents(runItemId);
   }
 
   async snapshot(): Promise<ControlPlaneStateSnapshot> {

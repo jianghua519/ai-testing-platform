@@ -19,7 +19,9 @@ export const createControlPlaneStoreFromEnv = async (env: NodeJS.ProcessEnv = pr
 
     return PostgresControlPlaneStore.open({
       connectionString,
-      autoMigrate: env.CONTROL_PLANE_AUTO_MIGRATE !== 'false',
+      runMigrations: env.CONTROL_PLANE_RUN_MIGRATIONS
+        ? env.CONTROL_PLANE_RUN_MIGRATIONS !== 'false'
+        : env.CONTROL_PLANE_AUTO_MIGRATE !== 'false',
     });
   }
 
