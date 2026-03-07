@@ -45,3 +45,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-091146-step-project-task.md` - 远程step控制协议
 
 - `2026-03-07`: `docs/project/tasks/20260307-092221-control-plane-api-project-task.md` - control-plane API接入
+
+- `2026-03-07`: `docs/project/tasks/20260307-093158-control-plane-project-task.md` - control-plane持久化和结果幂等

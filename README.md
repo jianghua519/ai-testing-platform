@@ -5,7 +5,7 @@
 当前代码骨架：
 
 - `apps/web-worker`：Web 执行 worker，负责编译 DSL、启动浏览器会话、执行 step、回传结果
-- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、提供 step 决策接口、保存内存态事件
+- `apps/control-plane`：最小控制面 API，负责接收 runner 结果、提供 step 决策接口，并默认把状态持久化到文件仓储
 - `packages/web-dsl-schema`：源 DSL、编译后模型、执行结果类型
 - `packages/dsl-compiler`：DSL 编译器骨架
 - `packages/playwright-adapter`：Playwright 执行适配层与 step 执行引擎

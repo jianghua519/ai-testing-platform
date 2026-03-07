@@ -2,9 +2,9 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { URL } from 'node:url';
 import type { AddressInfo } from 'node:net';
-import type { ControlPlaneServer, JobEventsResponse, RunnerResultEnvelope, StepOverrideRequest } from '../types.js';
+import type { ControlPlaneServer, ControlPlaneStore, JobEventsResponse, RunnerResultEnvelope, StepOverrideRequest } from '../types.js';
 import type { StepControlRequest, StepControlResponse } from '@aiwtp/web-worker';
-import { InMemoryControlPlaneState } from './control-plane-state.js';
+import { createControlPlaneStoreFromEnv } from './create-control-plane-store.js';
 
 const json = (response: ServerResponse, status: number, payload?: unknown): void => {
   if (payload === undefined) {
@@ -57,15 +57,15 @@ const matchPath = (pathname: string, expression: RegExp): RegExpMatchArray | nul
 export interface StartControlPlaneServerOptions {
   port?: number;
   hostname?: string;
-  state?: InMemoryControlPlaneState;
+  store?: ControlPlaneStore;
 }
 
 export interface StartedControlPlaneServer extends ControlPlaneServer {
-  state: InMemoryControlPlaneState;
+  store: ControlPlaneStore;
 }
 
 export const startControlPlaneServer = async (options: StartControlPlaneServerOptions = {}): Promise<StartedControlPlaneServer> => {
-  const state = options.state ?? new InMemoryControlPlaneState();
+  const store = options.store ?? (await createControlPlaneStoreFromEnv());
   const hostname = options.hostname ?? '127.0.0.1';
 
   const server = http.createServer(async (request, response) => {
@@ -86,8 +86,8 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
 
-        state.recordRunnerEvent(body);
-        json(response, 202, { accepted: true });
+        const result = await store.recordRunnerEvent(body);
+        json(response, result.duplicate ? 200 : 202, { accepted: true, duplicate: result.duplicate });
         return;
       }
 
@@ -100,7 +100,7 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
 
-        const decision = state.dequeueStepDecision(jobId, sourceStepId);
+        const decision = await store.dequeueStepDecision(jobId, sourceStepId);
         if (!decision) {
           json(response, 204);
           return;
@@ -119,7 +119,7 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
           return;
         }
 
-        state.enqueueStepDecision(jobId, sourceStepId, buildDecision(body));
+        await store.enqueueStepDecision(jobId, sourceStepId, buildDecision(body));
         json(response, 202, { accepted: true });
         return;
       }
@@ -128,7 +128,7 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
       if (method === 'GET' && eventsMatch) {
         const [, jobId] = eventsMatch;
         const payload: JobEventsResponse = {
-          items: state.listJobEvents(jobId),
+          items: await store.listJobEvents(jobId),
         };
         json(response, 200, payload);
         return;
@@ -151,12 +151,13 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
   const address = server.address() as AddressInfo;
 
   return {
-    state,
+    store,
     port: address.port,
     baseUrl: `http://${hostname}:${address.port}`,
     async close(): Promise<void> {
       server.close();
       await once(server, 'close');
+      await store.close?.();
     },
   };
 };

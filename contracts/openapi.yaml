@@ -224,6 +224,7 @@ paths:
     post:
       tags: [Internal]
       summary: Accept runner result envelopes over HTTP bridge
+      description: Idempotent by `event_id`. Duplicate events return HTTP 200 with `duplicate=true`.
       requestBody:
         required: true
         content:
@@ -239,9 +240,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  accepted: { type: boolean, const: true }
+                $ref: "#/components/schemas/RunnerResultAccepted"
+        "200":
+          description: Duplicate event accepted idempotently
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            X-Trace-Id: { $ref: "#/components/headers/XTraceId" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunnerResultAccepted"
         "400": { $ref: "#/components/responses/BadRequest" }
   /api/v1/internal/jobs/{job_id}/steps/{source_step_id}:override:
     post:
@@ -639,6 +647,12 @@ components:
       type: object
       description: HTTP bridge payload carrying a raw AsyncAPI-compatible runner result envelope.
       additionalProperties: true
+    RunnerResultAccepted:
+      type: object
+      required: [accepted, duplicate]
+      properties:
+        accepted: { type: boolean, const: true }
+        duplicate: { type: boolean }
     JobEventListResponse:
       type: object
       required: [items]

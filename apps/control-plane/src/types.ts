@@ -25,9 +25,23 @@ export interface ControlPlaneServer {
   close(): Promise<void>;
 }
 
-export interface InMemoryControlPlaneStateSnapshot {
+export interface ControlPlaneStateSnapshot {
   eventsByJob: Record<string, RecordedRunnerEvent[]>;
   pendingDecisionsByJob: Record<string, Record<string, StepControlResponse[]>>;
+  receivedEventIds: string[];
+}
+
+export interface RecordRunnerEventResult {
+  duplicate: boolean;
+}
+
+export interface ControlPlaneStore {
+  recordRunnerEvent(envelope: RunnerResultEnvelope): Promise<RecordRunnerEventResult>;
+  listJobEvents(jobId: string): Promise<RecordedRunnerEvent[]>;
+  enqueueStepDecision(jobId: string, sourceStepId: string, decision: StepControlResponse): Promise<void>;
+  dequeueStepDecision(jobId: string, sourceStepId: string): Promise<StepControlResponse | undefined>;
+  snapshot(): Promise<ControlPlaneStateSnapshot>;
+  close?(): Promise<void>;
 }
 
 export interface StepResultRecord {
