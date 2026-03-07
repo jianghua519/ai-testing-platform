@@ -1,6 +1,7 @@
 import { END, START, StateGraph } from '@langchain/langgraph';
 
-import type { AssistantMessage, AssistantThread, AssistantTurnResult } from '../types.js';
+import type { AssistantActionResult, AssistantMessage, AssistantThread, AssistantTurnResult } from '../types.js';
+import type { AssistantActionRouter } from './assistant-action-router.js';
 import type { AiOrchestratorConfig } from './config.js';
 import type { AiChatProvider } from './providers.js';
 import type { AssistantThreadStore } from './thread-store.js';
@@ -11,6 +12,7 @@ interface AssistantTurnState {
   thread: AssistantThread | null;
   userMessage: AssistantMessage | null;
   extractedFacts: string[];
+  action: AssistantActionResult | null;
   reply: string | null;
 }
 
@@ -24,6 +26,7 @@ const createAssistantStateGraph = () => new StateGraph<AssistantTurnState>({
       default: () => [],
       reducer: (_current, update) => update,
     },
+    action: null,
     reply: null,
   },
 });
@@ -63,7 +66,7 @@ const buildSystemPrompt = (config: AiOrchestratorConfig, memoryFacts: string[]):
   return [
     '你是 AI Web Testing Platform 的编排助手。',
     '回答必须优先基于当前记忆和用户消息；如果没有足够事实，就明确说明。',
-    '当前阶段已经实现 assistant thread / memory / chat API，浏览器探索、自愈和结果分析后续再接入。',
+    '当前能力已经接入 assistant thread / memory / Playwright MCP exploration / self-heal / run evaluation / action chat。',
     `当前控制面地址：${config.controlPlaneBaseUrl}`,
     `当前模型提供方：${config.provider}`,
     '当前记忆：',
@@ -74,14 +77,17 @@ const buildSystemPrompt = (config: AiOrchestratorConfig, memoryFacts: string[]):
 export class AssistantGraphRuntime {
   readonly #compiledGraph;
   readonly #config: AiOrchestratorConfig;
+  readonly #actionRouter: AssistantActionRouter | null;
   readonly #provider: AiChatProvider;
   readonly #threadStore: AssistantThreadStore;
 
   constructor(options: {
+    actionRouter?: AssistantActionRouter | null;
     config: AiOrchestratorConfig;
     provider: AiChatProvider;
     threadStore: AssistantThreadStore;
   }) {
+    this.#actionRouter = options.actionRouter ?? null;
     this.#config = options.config;
     this.#provider = options.provider;
     this.#threadStore = options.threadStore;
@@ -117,7 +123,20 @@ export class AssistantGraphRuntime {
 
         return { extractedFacts, thread: await this.#threadStore.getThread(state.threadId) };
       })
+      .addNode('routeAction', async (state) => {
+        const thread = await this.#threadStore.getThread(state.threadId);
+        if (!thread || !this.#actionRouter) {
+          return { action: null, thread };
+        }
+
+        const action = await this.#actionRouter.route(thread, state.userInput);
+        return { action, thread };
+      })
       .addNode('callModel', async (state) => {
+        if (state.action) {
+          return { reply: state.action.summary, thread: await this.#threadStore.getThread(state.threadId) };
+        }
+
         const thread = await this.#threadStore.getThread(state.threadId);
         if (!thread) {
           throw new Error(`assistant thread not found before model call: ${state.threadId}`);
@@ -147,7 +166,8 @@ export class AssistantGraphRuntime {
       .addEdge(START, 'loadThread')
       .addEdge('loadThread', 'persistUserMessage')
       .addEdge('persistUserMessage', 'extractMemory')
-      .addEdge('extractMemory', 'callModel')
+      .addEdge('extractMemory', 'routeAction')
+      .addEdge('routeAction', 'callModel')
       .addEdge('callModel', 'persistAssistantMessage')
       .addEdge('persistAssistantMessage', END)
       .compile();
@@ -160,6 +180,7 @@ export class AssistantGraphRuntime {
       thread: null,
       userMessage: null,
       extractedFacts: [],
+      action: null,
       reply: null,
     });
 
@@ -178,6 +199,7 @@ export class AssistantGraphRuntime {
     }
 
     return {
+      action: (result.action as AssistantActionResult | null | undefined) ?? null,
       assistantMessage,
       thread,
     };

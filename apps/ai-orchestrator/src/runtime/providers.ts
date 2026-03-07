@@ -17,6 +17,8 @@ export interface AiChatProvider {
   invoke(request: ProviderRequest): Promise<string>;
 }
 
+export type ToolCapableChatModel = ChatGoogleGenerativeAI | ChatOpenAI;
+
 const normalizeResponseContent = (content: unknown): string => {
   if (typeof content === 'string') {
     return content.trim();
@@ -143,4 +145,33 @@ export const createAiChatProvider = (config: AiOrchestratorConfig): AiChatProvid
   }
 
   return new MockAiChatProvider();
+};
+
+export const createToolCapableChatModel = (config: AiOrchestratorConfig): ToolCapableChatModel | null => {
+  if (config.provider === 'google') {
+    if (!config.googleApiKey) {
+      throw new Error('GOOGLE_API_KEY is required when AI_PROVIDER=google');
+    }
+
+    return new ChatGoogleGenerativeAI({
+      apiKey: config.googleApiKey,
+      model: config.googleModel,
+      temperature: config.temperature,
+    });
+  }
+
+  if (config.provider === 'openai') {
+    if (!config.openaiApiKey) {
+      throw new Error('OPENAI_API_KEY is required when AI_PROVIDER=openai');
+    }
+
+    return new ChatOpenAI({
+      apiKey: config.openaiApiKey,
+      configuration: config.openaiBaseUrl ? { baseURL: config.openaiBaseUrl } : undefined,
+      model: config.openaiModel,
+      temperature: config.temperature,
+    });
+  }
+
+  return null;
 };

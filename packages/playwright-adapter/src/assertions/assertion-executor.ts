@@ -19,7 +19,9 @@ export const runAssertions = async (page: Page, assertions: CompiledAssertion[],
       throw new Error(`assertion ${assertion.operator} requires locator`);
     }
 
-    const locator = buildLocator(page, assertion.locator);
+    const locator = assertion.operator === 'text_contains' && assertion.locator.strategy === 'text'
+      ? page.getByText(assertion.locator.value, { exact: false })
+      : buildLocator(page, assertion.locator);
     await locator.waitFor({ timeout: timeoutMs });
 
     switch (assertion.operator) {

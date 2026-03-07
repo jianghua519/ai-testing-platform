@@ -6,6 +6,11 @@
     "composite": true,
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
+  "references": [
+    { "path": "../control-plane" },
+    { "path": "../../packages/dsl-compiler" },
+    { "path": "../../packages/web-dsl-schema" }
+  ],
   "include": [
     "src/**/*.ts"
   ]

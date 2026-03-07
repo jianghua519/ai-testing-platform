@@ -19,6 +19,7 @@
     "sample:saucedemo:checkout:compose": "npm run build && node ./scripts/run_saucedemo_checkout_case_compose.mjs",
     "smoke:ai-orchestrator:mock": "node ./scripts/run_ai_orchestrator_mock_smoke.mjs",
     "smoke:ai-orchestrator:postgres:persistence": "node ./scripts/run_ai_orchestrator_postgres_persistence_smoke.mjs",
+    "smoke:ai-orchestrator:workflow": "node ./scripts/run_ai_orchestrator_workflow_smoke.mjs",
     "worker:agent": "node ./scripts/start_polling_web_agent.mjs",
     "smoke:scheduler:compose": "node ./scripts/run_scheduler_compose_smoke.mjs",
     "smoke:web:real": "npm run build && node ./scripts/run_real_browser_smoke.mjs",

@@ -48,6 +48,7 @@
 - `npm run playwright:install`
 - `npm run smoke:ai-orchestrator:mock`：验证 assistant thread / memory / chat API 与 LangGraph 最小编排闭环
 - `npm run smoke:ai-orchestrator:postgres:persistence`：验证 assistant thread / memory / chat API 已落到 PostgreSQL，并可在服务重启后继续读取
+- `npm run smoke:ai-orchestrator:workflow`：验证 Playwright MCP 探索录屏、录屏转 case、自愈执行、run evaluation 和动作型 chatbot 闭环
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
 - `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
@@ -72,6 +73,12 @@ AI Orchestrator：
   - `AI_PROVIDER=google`，使用 `GOOGLE_API_KEY` 和 `AI_GOOGLE_MODEL`
   - `AI_PROVIDER=openai`，使用 `OPENAI_API_KEY`、`AI_OPENAI_MODEL`，可选 `AI_OPENAI_BASE_URL`
   - `AI_PROVIDER=mock`，用于本地和容器 smoke，不依赖外部密钥
+- 当前动作能力：
+  - Playwright MCP 探索目标页面并生成录屏、trace、截图等 artifact
+  - 根据最新 exploration/recording 自动发布 test case 与默认 dataset
+  - 对失败 `run_item` 发起 runtime self-heal，并通过 step override 回放验证
+  - 对执行结果做 deterministic first + LLM assisted 的 run evaluation
+  - 通过 assistant chat 直接触发 exploration、browser assist、publish case、自愈和评估
 - 建议从模板开始：
   - `cp .env.example .env`
   - 按需填写 `GOOGLE_API_KEY` 或 `OPENAI_API_KEY`
@@ -81,6 +88,15 @@ AI Orchestrator：
   - `POST /api/v1/assistant/threads`
   - `GET /api/v1/assistant/threads/{thread_id}`
   - `POST /api/v1/assistant/threads/{thread_id}/messages`
+- 本轮 orchestration API：
+  - `POST /api/v1/explorations`
+  - `GET /api/v1/explorations/{exploration_id}`
+  - `POST /api/v1/explorations/{exploration_id}:start`
+  - `POST /api/v1/explorations/{exploration_id}:stop`
+  - `POST /api/v1/explorations/{exploration_id}:publish-test-case`
+  - `POST /api/v1/run-items/{run_item_id}:self-heal`
+  - `POST /api/v1/run-items/{run_item_id}:evaluate`
+  - `GET /api/v1/run-evaluations/{run_evaluation_id}`
 
 当前控制面查询接口：
 
@@ -130,6 +146,7 @@ artifact 存储约定：
 - `AI_PROVIDER=mock docker compose up -d control-plane ai-orchestrator --wait`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:mock`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:postgres:persistence`
+- `docker compose exec -T tools npm run smoke:ai-orchestrator:workflow`
 - `docker compose run --rm tools npm run smoke:control-plane:compose`
 - `docker compose run --rm tools npm run smoke:scheduler:compose`
 - `docker compose run --rm tools npm run control-plane:artifacts:prune`
@@ -137,6 +154,7 @@ artifact 存储约定：
 
 镜像说明：
 
-- `control-plane` 和 `ai-orchestrator` 使用 `Dockerfile` 的 `app-runtime` 目标，保持较小的 Node 运行时镜像
+- `control-plane` 使用 `Dockerfile` 的 `app-runtime` 目标，保持较小的 Node 运行时镜像
+- `ai-orchestrator` 使用 `Dockerfile` 的 `playwright-app-runtime` 目标，内置 Playwright 浏览器依赖，供 MCP 探索和 browser assist 复用
 - `tools` 使用 `Dockerfile` 的 `playwright-runtime` 目标，直接基于官方 `mcr.microsoft.com/playwright:v1.58.2-noble`
 - `npm ci` 使用 BuildKit cache mount，避免每次重新下载整包依赖

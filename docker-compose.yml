@@ -69,7 +69,7 @@ services:
   ai-orchestrator:
     build:
       context: .
-      target: app-runtime
+      target: playwright-app-runtime
     depends_on:
       control-plane:
         condition: service_healthy
@@ -86,12 +86,24 @@ services:
       AI_OPENAI_BASE_URL: ${AI_OPENAI_BASE_URL:-}
       AI_PROVIDER_TEMPERATURE: ${AI_PROVIDER_TEMPERATURE:-0.1}
       AI_MEMORY_MAX_FACTS: ${AI_MEMORY_MAX_FACTS:-32}
+      AI_ORCHESTRATOR_PLAYWRIGHT_BROWSER: ${AI_ORCHESTRATOR_PLAYWRIGHT_BROWSER:-chromium}
+      AI_ORCHESTRATOR_PLAYWRIGHT_HEADLESS: ${AI_ORCHESTRATOR_PLAYWRIGHT_HEADLESS:-true}
+      AI_ORCHESTRATOR_PLAYWRIGHT_OUTPUT_ROOT: ${AI_ORCHESTRATOR_PLAYWRIGHT_OUTPUT_ROOT:-/tmp/aiwtp-ai-orchestrator}
+      AI_ORCHESTRATOR_PLAYWRIGHT_EXECUTABLE_PATH: ${AI_ORCHESTRATOR_PLAYWRIGHT_EXECUTABLE_PATH:-}
+      AI_ORCHESTRATOR_PLAYWRIGHT_VIDEO_SIZE: ${AI_ORCHESTRATOR_PLAYWRIGHT_VIDEO_SIZE:-1280x720}
+      AI_ORCHESTRATOR_PLAYWRIGHT_SAVE_TRACE: ${AI_ORCHESTRATOR_PLAYWRIGHT_SAVE_TRACE:-true}
+      AI_ORCHESTRATOR_EXPLORATION_MAX_STEPS: ${AI_ORCHESTRATOR_EXPLORATION_MAX_STEPS:-24}
+      AI_ORCHESTRATOR_EXPLORATION_TIMEOUT_MS: ${AI_ORCHESTRATOR_EXPLORATION_TIMEOUT_MS:-180000}
+      AI_ORCHESTRATOR_SCRIPTED_UPLOAD_PATH: ${AI_ORCHESTRATOR_SCRIPTED_UPLOAD_PATH:-/tmp/aiwtp-ai-orchestrator/shared/avatar-smoke.txt}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       CONTROL_PLANE_BASE_URL: http://control-plane:8080
+      CONTROL_PLANE_JWT_SECRET: local-control-plane-dev-secret
     ports:
       - "${AI_ORCHESTRATOR_HOST_PORT:-18081}:${AI_ORCHESTRATOR_PORT:-8081}"
     command: ["node", "./scripts/start_ai_orchestrator_server.mjs"]
+    volumes:
+      - ai-orchestrator-output:/tmp/aiwtp-ai-orchestrator
     healthcheck:
       test:
         [
@@ -122,6 +134,7 @@ services:
       AI_ORCHESTRATOR_STORE_MODE: ${AI_ORCHESTRATOR_STORE_MODE:-postgres}
       AI_ORCHESTRATOR_DATABASE_URL: ${AI_ORCHESTRATOR_DATABASE_URL:-postgresql://aiwtp:aiwtp-password@postgres:5432/aiwtp}
       AI_ORCHESTRATOR_RUN_MIGRATIONS: ${AI_ORCHESTRATOR_RUN_MIGRATIONS:-true}
+      AI_ORCHESTRATOR_SCRIPTED_UPLOAD_PATH: ${AI_ORCHESTRATOR_SCRIPTED_UPLOAD_PATH:-/tmp/aiwtp-ai-orchestrator/shared/avatar-smoke.txt}
       ARTIFACT_STORAGE_MODE: s3
       ARTIFACT_S3_ENDPOINT: http://minio:9000
       ARTIFACT_S3_REGION: us-east-1
@@ -134,7 +147,10 @@ services:
       ARTIFACT_DOWNLOAD_SIGNED_URL_TTL_SECONDS: "300"
     shm_size: 1gb
     command: ["sleep", "infinity"]
+    volumes:
+      - ai-orchestrator-output:/tmp/aiwtp-ai-orchestrator
 
 volumes:
   postgres-data:
   minio-data:
+  ai-orchestrator-output:

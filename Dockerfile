@@ -43,7 +43,7 @@ EXPOSE 8080
 
 CMD ["node", "./scripts/start_control_plane_server.mjs"]
 
-FROM mcr.microsoft.com/playwright:v1.58.2-noble AS playwright-runtime
+FROM mcr.microsoft.com/playwright:v1.58.2-noble AS playwright-base
 
 WORKDIR /app
 
@@ -54,5 +54,11 @@ RUN apt-get update \
 COPY --from=build /app ./
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+FROM playwright-base AS playwright-app-runtime
+
+CMD ["node", "./scripts/start_ai_orchestrator_server.mjs"]
+
+FROM playwright-base AS playwright-runtime
 
 CMD ["sleep", "infinity"]

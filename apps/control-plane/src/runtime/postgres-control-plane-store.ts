@@ -2592,9 +2592,6 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
        from tenant_schemas
        order by tenant_id asc`,
     );
-    for (const row of result.rows) {
-      this.ensuredTenantSchemas.add(row.tenant_id);
-    }
     return result.rows.map((row) => row.tenant_id);
   }
 
@@ -2614,7 +2611,6 @@ export class PostgresControlPlaneStore implements ControlPlaneStore {
       return undefined;
     }
 
-    this.ensuredTenantSchemas.add(tenantId);
     return result.rows[0].schema_name;
   }
 
