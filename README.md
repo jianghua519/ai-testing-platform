@@ -104,6 +104,10 @@ AI Orchestrator：
 Console：
 
 - `apps/console` 当前采用最小 SSR/BFF 形态，不引入新的前端框架，只使用现有 PostgreSQL 持久化对象和 `control-plane` / `ai-orchestrator` 已有动作接口
+- compose 默认端口语义：
+  - `http://127.0.0.1:18080` 是 `control-plane` API
+  - `http://127.0.0.1:18081` 是 `ai-orchestrator` API
+  - `http://127.0.0.1:18082` 是 `apps/console` UI
 - 当前入口：
   - `/overview`
   - `/assets`

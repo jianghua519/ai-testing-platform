@@ -38,6 +38,9 @@ export interface OverviewData {
   artifactCount: number;
   artifactBytes: number;
   artifactTypes: StatusCount[];
+  attentionFailedRuns: OverviewRunAttentionItem[];
+  attentionPublishableCases: OverviewCaseAttentionItem[];
+  attentionExplorations: OverviewExplorationAttentionItem[];
 }
 
 export interface SystemStatus {
@@ -50,6 +53,7 @@ export interface TestCaseListItem {
   name: string;
   status: string;
   latestVersionId: string | null;
+  latestPublishedVersionId: string | null;
   updatedAt: string;
 }
 
@@ -162,6 +166,23 @@ export interface RunListItem {
   updatedAt: string;
 }
 
+export interface OverviewRunAttentionItem {
+  id: string;
+  name: string | null;
+  status: string;
+  selectionKind: string | null;
+  updatedAt: string;
+}
+
+export interface OverviewCaseAttentionItem {
+  id: string;
+  name: string;
+  status: string;
+  latestVersionId: string | null;
+  latestPublishedVersionId: string | null;
+  updatedAt: string;
+}
+
 export interface RunItemSummary {
   id: string;
   status: string;
@@ -268,6 +289,15 @@ export interface ThreadDetail {
 }
 
 export interface ExplorationListItem {
+  id: string;
+  name: string | null;
+  status: string;
+  startUrl: string;
+  recordingId: string | null;
+  updatedAt: string;
+}
+
+export interface OverviewExplorationAttentionItem {
   id: string;
   name: string | null;
   status: string;
@@ -425,6 +455,9 @@ export class ConsoleStore {
       explorationStatuses,
       artifactMetrics,
       artifactTypes,
+      failedRunsResult,
+      publishableCasesResult,
+      attentionExplorationsResult,
     ] = await Promise.all([
       this.#countRows(schema, 'test_cases', projectId),
       countByValue(this.#pool, schema, 'test_cases', projectId, 'status'),
@@ -444,6 +477,54 @@ export class ConsoleStore {
         [projectId],
       ),
       countByValue(this.#pool, schema, 'artifacts', projectId, 'artifact_type'),
+      this.#pool.query<{
+        run_id: string;
+        name: string | null;
+        status: string;
+        selection_kind: string | null;
+        updated_at: string;
+      }>(
+        `select run_id, name, status, selection_kind, updated_at::text
+           from ${schema}.runs
+          where project_id = $1
+            and status = 'failed'
+          order by updated_at desc, run_id desc
+          limit 5`,
+        [projectId],
+      ),
+      this.#pool.query<{
+        test_case_id: string;
+        name: string;
+        status: string;
+        latest_version_id: string | null;
+        latest_published_version_id: string | null;
+        updated_at: string;
+      }>(
+        `select test_case_id, name, status, latest_version_id, latest_published_version_id, updated_at::text
+           from ${schema}.test_cases
+          where project_id = $1
+            and latest_version_id is not null
+            and coalesce(latest_published_version_id, '') <> latest_version_id
+          order by updated_at desc, test_case_id desc
+          limit 5`,
+        [projectId],
+      ),
+      this.#pool.query<{
+        exploration_id: string;
+        name: string | null;
+        status: string;
+        start_url: string;
+        recording_id: string | null;
+        updated_at: string;
+      }>(
+        `select exploration_id, name, status, start_url, recording_id, updated_at::text
+           from ${schema}.exploration_sessions
+          where project_id = $1
+            and status in ('draft', 'running', 'failed', 'stopped')
+          order by updated_at desc, exploration_id desc
+          limit 5`,
+        [projectId],
+      ),
     ]);
 
     const activeRunCount = runStatuses
@@ -469,6 +550,29 @@ export class ConsoleStore {
       artifactCount: Number(artifactMetrics.rows[0]?.artifact_count ?? '0'),
       artifactBytes: Number(artifactMetrics.rows[0]?.artifact_bytes ?? '0'),
       artifactTypes,
+      attentionFailedRuns: failedRunsResult.rows.map((row) => ({
+        id: row.run_id,
+        name: row.name,
+        status: row.status,
+        selectionKind: row.selection_kind,
+        updatedAt: row.updated_at,
+      })),
+      attentionPublishableCases: publishableCasesResult.rows.map((row) => ({
+        id: row.test_case_id,
+        name: row.name,
+        status: row.status,
+        latestVersionId: row.latest_version_id,
+        latestPublishedVersionId: row.latest_published_version_id,
+        updatedAt: row.updated_at,
+      })),
+      attentionExplorations: attentionExplorationsResult.rows.map((row) => ({
+        id: row.exploration_id,
+        name: row.name,
+        status: row.status,
+        startUrl: row.start_url,
+        recordingId: row.recording_id,
+        updatedAt: row.updated_at,
+      })),
     };
   }
 
@@ -526,9 +630,10 @@ export class ConsoleStore {
       name: string;
       status: string;
       latest_version_id: string | null;
+      latest_published_version_id: string | null;
       updated_at: string;
     }>(
-      `select test_case_id, name, status, latest_version_id, updated_at::text
+      `select test_case_id, name, status, latest_version_id, latest_published_version_id, updated_at::text
          from ${schema}.test_cases
         where ${conditions.join(' and ')}
         order by updated_at desc, test_case_id desc
@@ -542,6 +647,7 @@ export class ConsoleStore {
       name: row.name,
       status: row.status,
       latestVersionId: row.latest_version_id,
+      latestPublishedVersionId: row.latest_published_version_id,
       updatedAt: row.updated_at,
     }));
   }

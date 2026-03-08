@@ -79,3 +79,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-221500-recording-capability-gap-project-task.md` - 录屏到报告能力调研与 GAP 分析
 
 - `2026-03-08`: `docs/project/tasks/20260308-103000-apps-console-minimal-ui-project-task.md` - apps console 最小工作台 UI 开发任务说明
+
+- `2026-03-08`: `docs/project/tasks/20260308-105440-control-plane-compose-project-task.md` - console 操作台信息架构与 compose 入口修正

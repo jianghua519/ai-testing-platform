@@ -61,25 +61,34 @@ const DEFAULT_PLAN = {
 
 const STYLES = `
   :root {
-    --bg: #f5efe2;
-    --bg-warm: #ebe1c6;
-    --panel: rgba(255, 251, 244, 0.9);
-    --panel-strong: #fffaf2;
-    --line: rgba(30, 46, 56, 0.14);
-    --ink: #10222f;
-    --muted: #5b6d77;
-    --accent: #0f766e;
-    --accent-soft: rgba(15, 118, 110, 0.12);
-    --warning: #9a3412;
-    --warning-soft: rgba(154, 52, 18, 0.1);
-    --nav: #16323f;
-    --nav-soft: rgba(22, 50, 63, 0.88);
-    --shadow: 0 24px 50px rgba(16, 34, 47, 0.12);
-    --radius: 22px;
-    --radius-small: 14px;
+    --bg: #eef3f6;
+    --bg-top: #f8fbfc;
+    --panel: rgba(255, 255, 255, 0.94);
+    --panel-strong: #ffffff;
+    --panel-muted: #f7fafc;
+    --line: rgba(15, 23, 42, 0.12);
+    --line-strong: rgba(15, 23, 42, 0.22);
+    --ink: #10202e;
+    --muted: #5c6b79;
+    --primary: #0f766e;
+    --primary-soft: rgba(15, 118, 110, 0.12);
+    --info: #155eef;
+    --info-soft: rgba(21, 94, 239, 0.12);
+    --success: #067647;
+    --success-soft: rgba(6, 118, 71, 0.12);
+    --warning: #b54708;
+    --warning-soft: rgba(181, 71, 8, 0.12);
+    --danger: #b42318;
+    --danger-soft: rgba(180, 35, 24, 0.12);
+    --neutral: #475467;
+    --neutral-soft: rgba(71, 84, 103, 0.10);
+    --nav: #101a24;
+    --nav-soft: rgba(255, 255, 255, 0.7);
+    --shadow: 0 16px 30px rgba(15, 23, 42, 0.08);
+    --radius: 18px;
+    --radius-small: 12px;
     --mono: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", monospace;
-    --sans: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
-    --display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+    --sans: "IBM Plex Sans", "Aptos", "Segoe UI", "Helvetica Neue", sans-serif;
   }
 
   * { box-sizing: border-box; }
@@ -87,9 +96,9 @@ const STYLES = `
     margin: 0;
     color: var(--ink);
     background:
-      radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 30%),
-      radial-gradient(circle at top right, rgba(191, 90, 36, 0.12), transparent 26%),
-      linear-gradient(180deg, var(--bg) 0%, var(--bg-warm) 100%);
+      radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 24%),
+      radial-gradient(circle at top right, rgba(21, 94, 239, 0.08), transparent 20%),
+      linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 100%);
     font-family: var(--sans);
   }
 
@@ -102,124 +111,129 @@ const STYLES = `
   }
 
   .sidebar {
-    background: linear-gradient(180deg, var(--nav) 0%, #1b4657 100%);
-    color: #f6efe1;
-    padding: 28px 22px;
+    background: linear-gradient(180deg, var(--nav) 0%, #172733 100%);
+    color: #f8fafc;
+    padding: 22px 18px;
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 18px;
   }
 
   .logo {
-    font-family: var(--display);
-    font-size: 31px;
-    letter-spacing: 0.02em;
-    line-height: 1;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.1;
   }
 
   .sublogo {
-    color: rgba(246, 239, 225, 0.72);
-    font-size: 13px;
-    letter-spacing: 0.18em;
+    color: rgba(248, 250, 252, 0.65);
+    font-size: 12px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
+    margin-top: 4px;
   }
 
   .nav-group {
     display: grid;
-    gap: 10px;
+    gap: 8px;
   }
 
   .nav-link {
-    padding: 14px 16px;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.82);
-    background: rgba(255, 255, 255, 0.03);
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: rgba(248, 250, 252, 0.82);
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 14px;
+    font-weight: 600;
   }
 
   .nav-link.active {
     color: white;
-    background: rgba(255, 250, 242, 0.14);
-    border-color: rgba(255, 250, 242, 0.22);
-  }
-
-  .sidebar-foot {
-    margin-top: auto;
-    display: grid;
-    gap: 14px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.14);
   }
 
   .main {
-    padding: 24px;
+    padding: 18px;
     display: grid;
-    gap: 18px;
+    gap: 14px;
   }
 
-  .topbar, .page {
+  .topbar, .context-bar, .stat, .card, .list, .detail, .section, .filters, .flash {
     background: var(--panel);
-    border: 1px solid rgba(255, 255, 255, 0.56);
+    border: 1px solid var(--line);
     box-shadow: var(--shadow);
-    backdrop-filter: blur(18px);
+    backdrop-filter: blur(12px);
   }
 
-  .topbar {
-    border-radius: 24px;
-    padding: 18px 20px;
+  .topbar, .context-bar {
+    border-radius: var(--radius);
+    padding: 12px 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 18px;
+    gap: 12px;
     flex-wrap: wrap;
   }
 
-  .scope-form, .header-actions, .filters {
+  .scope-form, .header-actions, .inline-actions, .summary-badges {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     align-items: center;
     flex-wrap: wrap;
   }
 
-  .topbar-meta {
+  .topbar-meta, .context-meta {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
     align-items: center;
   }
 
   .page {
-    border-radius: 28px;
-    padding: 24px;
+    padding: 2px 0 0;
     display: grid;
-    gap: 20px;
+    gap: 14px;
   }
 
   .page-header {
     display: flex;
     justify-content: space-between;
-    gap: 16px;
+    gap: 12px;
     align-items: flex-start;
     flex-wrap: wrap;
   }
 
   h1, h2, h3 {
     margin: 0;
-    font-family: var(--display);
-    font-weight: 600;
+    font-family: var(--sans);
+    font-weight: 700;
   }
 
-  h1 { font-size: 40px; }
-  h2 { font-size: 24px; }
-  h3 { font-size: 18px; }
+  h1 { font-size: 28px; line-height: 1.2; }
+  h2 { font-size: 18px; line-height: 1.3; }
+  h3 { font-size: 15px; line-height: 1.35; }
 
   .subtitle {
     color: var(--muted);
-    margin-top: 8px;
-    max-width: 68ch;
-    line-height: 1.55;
+    margin-top: 4px;
+    max-width: 72ch;
+    line-height: 1.5;
+    font-size: 14px;
+  }
+
+  .context-title {
+    display: grid;
+    gap: 4px;
+  }
+
+  .eyebrow {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .button, button, select, input, textarea {
@@ -228,15 +242,16 @@ const STYLES = `
 
   .button, button {
     border: 0;
-    border-radius: 999px;
-    padding: 10px 16px;
+    border-radius: 10px;
+    padding: 10px 14px;
     cursor: pointer;
-    background: var(--accent);
+    background: var(--ink);
     color: white;
+    font-weight: 600;
   }
 
   .button.secondary, button.secondary {
-    background: transparent;
+    background: var(--panel-strong);
     color: var(--ink);
     border: 1px solid var(--line);
   }
@@ -244,48 +259,51 @@ const STYLES = `
   .badge {
     display: inline-flex;
     align-items: center;
-    padding: 5px 10px;
+    padding: 4px 9px;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--neutral-soft);
+    color: var(--neutral);
   }
 
-  .badge.warning {
-    background: var(--warning-soft);
-    color: var(--warning);
-  }
+  .badge.info { background: var(--info-soft); color: var(--info); }
+  .badge.success { background: var(--success-soft); color: var(--success); }
+  .badge.warning { background: var(--warning-soft); color: var(--warning); }
+  .badge.danger { background: var(--danger-soft); color: var(--danger); }
+  .badge.progress { background: var(--primary-soft); color: var(--primary); }
 
   .grid-4 {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 14px;
+    gap: 12px;
   }
 
   .grid-2 {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
+    gap: 12px;
   }
 
-  .stat, .card, .list, .detail, .flash {
-    border-radius: var(--radius);
-    background: var(--panel-strong);
-    border: 1px solid var(--line);
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .stat, .card, .detail, .section, .list, .filters, .flash {
+    border-radius: var(--radius-small);
   }
 
   .stat, .card, .detail {
-    padding: 18px;
+    padding: 14px;
   }
 
   .stat-value {
-    font-family: var(--display);
-    font-size: 40px;
+    font-size: 28px;
+    font-weight: 700;
     line-height: 1;
-    margin-top: 14px;
+    margin-top: 10px;
   }
 
   .meta {
@@ -293,42 +311,73 @@ const STYLES = `
     font-size: 13px;
   }
 
+  .strong-meta {
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
   .page-body {
     display: grid;
-    grid-template-columns: 360px minmax(0, 1fr);
-    gap: 18px;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 14px;
     align-items: start;
   }
 
   .list {
-    padding: 14px;
-    display: grid;
-    gap: 10px;
-  }
-
-  .list-item {
-    border-radius: 18px;
-    padding: 14px;
-    border: 1px solid transparent;
-    background: rgba(245, 239, 226, 0.64);
+    padding: 12px;
     display: grid;
     gap: 8px;
   }
 
+  .list-item {
+    border-radius: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    background: var(--panel-muted);
+    display: grid;
+    gap: 6px;
+  }
+
   .list-item.selected {
     border-color: rgba(15, 118, 110, 0.28);
-    background: rgba(15, 118, 110, 0.09);
+    background: rgba(15, 118, 110, 0.08);
+    box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.08);
+  }
+
+  .list-item-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .list-item-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+
+  .list-item-subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .list-item-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
   .detail {
     display: grid;
-    gap: 16px;
+    gap: 12px;
   }
 
   .section {
-    border-radius: 18px;
-    border: 1px solid var(--line);
-    padding: 16px;
+    padding: 14px;
     display: grid;
     gap: 12px;
   }
@@ -337,28 +386,52 @@ const STYLES = `
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
   }
 
   .filters {
-    padding: 16px;
-    border-radius: 18px;
-    background: rgba(255, 250, 242, 0.78);
-    border: 1px solid var(--line);
+    padding: 14px;
+    display: grid;
+    gap: 12px;
+  }
+
+  .filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .filter-field, .field {
+    display: grid;
+    gap: 6px;
+  }
+
+  .field-label {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .filter-actions {
+    display: flex;
+    gap: 8px;
+    align-items: end;
+    flex-wrap: wrap;
   }
 
   input, select, textarea {
     width: 100%;
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: 10px;
     background: white;
     padding: 10px 12px;
     color: var(--ink);
   }
 
   textarea {
-    min-height: 120px;
+    min-height: 110px;
     resize: vertical;
     font-family: var(--mono);
     font-size: 13px;
@@ -396,21 +469,93 @@ const STYLES = `
     letter-spacing: 0.08em;
   }
 
-  .inline-actions {
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .action-card {
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--panel-muted);
+    padding: 12px;
+    display: grid;
+    gap: 10px;
+  }
+
+  .action-card.compact {
+    gap: 8px;
+  }
+
+  .form-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .form-row, .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .summary-grid.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .summary-item {
+    display: grid;
+    gap: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel-muted);
+    padding: 10px 12px;
+  }
+
+  .summary-value {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+
+  .tabs {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+  }
+
+  .tab {
+    display: inline-flex;
     align-items: center;
-  }
-
-  details.action-panel {
+    justify-content: center;
+    padding: 9px 12px;
+    border-radius: 999px;
     border: 1px solid var(--line);
-    border-radius: 18px;
-    padding: 14px 16px;
-    background: rgba(255, 250, 242, 0.88);
+    background: var(--panel);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
   }
 
-  details.action-panel summary {
+  .tab.active {
+    background: var(--ink);
+    color: white;
+    border-color: var(--ink);
+  }
+
+  .attention-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .raw-details, details.action-panel {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--panel-muted);
+  }
+
+  .raw-details summary, details.action-panel summary {
     cursor: pointer;
     font-weight: 700;
   }
@@ -420,13 +565,14 @@ const STYLES = `
   }
 
   .flash.notice { border-color: rgba(15, 118, 110, 0.24); }
-  .flash.error { border-color: rgba(154, 52, 18, 0.28); background: #fff5f0; }
+  .flash.error { border-color: rgba(180, 35, 24, 0.28); background: #fff5f5; }
 
   .empty {
-    padding: 18px;
-    border-radius: 18px;
+    padding: 16px;
+    border-radius: 12px;
     border: 1px dashed var(--line);
     color: var(--muted);
+    background: rgba(255, 255, 255, 0.6);
   }
 
   .pagination {
@@ -438,11 +584,21 @@ const STYLES = `
 
   .mono { font-family: var(--mono); }
 
+  .stack {
+    display: grid;
+    gap: 12px;
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--line);
+  }
+
   @media (max-width: 1080px) {
     .shell { grid-template-columns: 1fr; }
     .sidebar { border-radius: 0 0 24px 24px; }
     .page-body { grid-template-columns: 1fr; }
-    .grid-4, .grid-2 { grid-template-columns: 1fr; }
+    .grid-4, .grid-3, .grid-2, .filter-grid, .action-grid, .form-row, .summary-grid, .summary-grid.three { grid-template-columns: 1fr; }
   }
 `;
 
@@ -475,13 +631,86 @@ const formatBytes = (value: number): string => {
 
 const statusBadgeClass = (status: string): string => {
   const value = status.toLowerCase();
-  if (['failed', 'error', 'archived', 'stopped', 'canceled'].includes(value)) {
+  if (['failed', 'error', 'stopped', 'canceled'].includes(value)) {
+    return 'badge danger';
+  }
+  if (['warning', 'needs_publish', 'draft', 'queued', 'pending'].includes(value)) {
     return 'badge warning';
+  }
+  if (['running', 'active'].includes(value)) {
+    return 'badge progress';
+  }
+  if (['passed', 'published', 'succeeded'].includes(value)) {
+    return 'badge success';
+  }
+  if (['inline_web_plan', 'case_version', 'manual', 'auto_explore', 'run_replay'].includes(value)) {
+    return 'badge info';
   }
   return 'badge';
 };
 
 const stringifyValue = (value: string | null | undefined): string => escapeHtml(value ?? '—');
+
+const shortId = (value: string | null | undefined, head = 8, tail = 4): string => {
+  if (!value?.trim()) {
+    return '—';
+  }
+  if (value.length <= head + tail + 1) {
+    return value;
+  }
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
+};
+
+const formatDateTime = (value: string | null | undefined): string => {
+  if (!value?.trim()) {
+    return '—';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+};
+
+const truncateText = (value: string | null | undefined, maxLength = 96): string => {
+  if (!value?.trim()) {
+    return '—';
+  }
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+};
+
+const formatUrlLabel = (value: string | null | undefined): string => {
+  if (!value?.trim()) {
+    return '—';
+  }
+  try {
+    const url = new URL(value);
+    return `${url.host}${url.pathname === '/' ? '' : url.pathname}`;
+  } catch {
+    return value;
+  }
+};
+
+const renderSecondaryId = (id: string): string => `
+  <span class="meta mono" title="${escapeHtml(id)}">ID ${escapeHtml(shortId(id))}</span>
+`;
+
+const displayRunName = (run: { id: string; name: string | null }): string => run.name?.trim() || `Run ${shortId(run.id, 6, 4)}`;
+
+const displayThreadTitle = (thread: { id: string; title: string | null }): string =>
+  thread.title?.trim() || `Thread ${shortId(thread.id, 6, 4)}`;
+
+const displayExplorationName = (exploration: { id: string; name: string | null; startUrl?: string }): string =>
+  exploration.name?.trim() || (exploration.startUrl ? `Explore ${formatUrlLabel(exploration.startUrl)}` : `Exploration ${shortId(exploration.id, 6, 4)}`);
+
+const renderPageLink = (path: string, scope: ProjectScope | null, extra: Record<string, string | undefined> = {}): string =>
+  `${path}${buildQueryString({ ...scopeParams(scope), ...extra })}`;
 
 const getBody = async (request: IncomingMessage): Promise<string> => {
   const chunks: Buffer[] = [];
@@ -576,20 +805,60 @@ const renderFlash = (notice?: string | null, error?: string | null): string => {
 };
 
 const renderActionPanel = (title: string, body: string): string => `
-  <details class="action-panel">
+  <details class="raw-details action-panel">
     <summary>${escapeHtml(title)}</summary>
     <div style="margin-top: 14px; display: grid; gap: 12px;">${body}</div>
   </details>
 `;
 
 const renderField = (label: string, value: string): string => `
-  <div style="display:grid; gap:6px;">
-    <div class="meta">${escapeHtml(label)}</div>
-    <div>${value}</div>
+  <div class="summary-item">
+    <div class="field-label">${escapeHtml(label)}</div>
+    <div class="summary-value">${value}</div>
   </div>
 `;
 
 const renderStatus = (status: string): string => `<span class="${statusBadgeClass(status)}">${escapeHtml(status)}</span>`;
+
+const renderSummaryField = (label: string, value: string, meta?: string): string => `
+  <div class="summary-item">
+    <div class="field-label">${escapeHtml(label)}</div>
+    <div class="summary-value">${value}</div>
+    ${meta ? `<div class="meta">${escapeHtml(meta)}</div>` : ''}
+  </div>
+`;
+
+const renderActionCard = (title: string, description: string, body: string, id?: string): string => `
+  <div class="action-card${body.includes('<button') && !body.includes('<textarea') ? ' compact' : ''}"${id ? ` id="${escapeHtml(id)}"` : ''}>
+    <div>
+      <h3>${escapeHtml(title)}</h3>
+      <div class="meta">${escapeHtml(description)}</div>
+    </div>
+    ${body}
+  </div>
+`;
+
+const renderRawJson = (title: string, value: unknown): string => `
+  <details class="raw-details">
+    <summary>${escapeHtml(title)}</summary>
+    <div style="margin-top: 10px;"><pre>${escapeHtml(formatJson(value))}</pre></div>
+  </details>
+`;
+
+const renderTabs = (
+  tabs: Array<{ href: string; label: string; active: boolean }>,
+): string => `
+  <div class="tabs">
+    ${tabs.map((tab) => `<a class="tab${tab.active ? ' active' : ''}" href="${escapeHtml(tab.href)}">${escapeHtml(tab.label)}</a>`).join('')}
+  </div>
+`;
+
+const renderFilterField = (label: string, control: string): string => `
+  <div class="filter-field">
+    <label class="field-label">${escapeHtml(label)}</label>
+    ${control}
+  </div>
+`;
 
 const renderProjectSwitcher = (
   pathname: string,
@@ -604,7 +873,7 @@ const renderProjectSwitcher = (
   }).join('');
   return `
     <form class="scope-form" method="get" action="${escapeHtml(pathname)}">
-      <label class="meta" for="scope">Project</label>
+      <label class="field-label" for="scope">Project Scope</label>
       <select id="scope" name="scope" onchange="this.form.submit()">
         ${options}
       </select>
@@ -651,16 +920,16 @@ const renderLayout = (input: {
           ${navLink('runs', '/runs', 'Runs')}
           ${navLink('ai-workspace', '/ai-workspace', 'AI Workspace')}
         </nav>
-        <div class="sidebar-foot">
-          <div>System Status</div>
-          <div>${input.systemStatus ? `${input.systemStatus.onlineAgents} agents online · queue ${input.systemStatus.queuedItems}` : 'No project selected'}</div>
-        </div>
       </aside>
       <main class="main">
-        <div class="topbar">
-          <div class="topbar-meta">
+        <div class="context-bar">
+          <div class="context-title">
+            <div class="eyebrow">Current Scope</div>
             ${input.scopes.length ? renderProjectSwitcher(input.pathname, input.scopes, input.currentScope) : '<div class="meta">No project scopes discovered yet.</div>'}
+          </div>
+          <div class="context-meta">
             ${input.currentScope ? `<span class="badge">${escapeHtml(input.currentScope.tenantId)}</span><span class="badge">${escapeHtml(input.currentScope.projectId)}</span>` : ''}
+            ${input.systemStatus ? `<span class="badge progress">${input.systemStatus.onlineAgents} agents</span><span class="badge${input.systemStatus.queuedItems > 0 ? ' warning' : ''}">queue ${input.systemStatus.queuedItems}</span>` : ''}
           </div>
         </div>
         ${renderFlash(input.notice, input.error)}
@@ -769,11 +1038,11 @@ const renderOverviewPage = async (ctx: RouteContext, pathname: string, url: URL)
     <div class="page-header">
       <div>
         <h1>Overview</h1>
-        <div class="subtitle">Stored objects and evidence coverage for the current project.</div>
+        <div class="subtitle">先看需要处理的对象，再看当前项目在 PostgreSQL / MinIO 里已经持有的内容。</div>
       </div>
       <div class="header-actions">
-        <a class="button" href="${escapeHtml(`/runs${query}`)}">New Run</a>
-        <a class="button secondary" href="${escapeHtml(`/ai-workspace${query}`)}">New Exploration</a>
+        <a class="button" href="${escapeHtml(`/runs${query}`)}">Open Runs</a>
+        <a class="button secondary" href="${escapeHtml(`/assets${query}`)}">Open Assets</a>
       </div>
     </div>
   `;
@@ -781,32 +1050,98 @@ const renderOverviewPage = async (ctx: RouteContext, pathname: string, url: URL)
     ? `<div class="empty">Select a tenant/project pair after data exists in PostgreSQL.</div>`
     : `
       <div class="grid-4">
-        ${renderStatCard('Test Cases', String(overview.testCaseCount), formatCountSummary(overview.testCaseStatuses))}
-        ${renderStatCard('Recordings', String(overview.recordingCount), `${overview.recordingAnalysisCount} analysis jobs · ${formatCountSummary(overview.recordingAnalysisStatuses)}`)}
-        ${renderStatCard('Runs', String(overview.runCount), `${overview.activeRunCount} active · ${overview.failedRunCount} failed`)}
-        ${renderStatCard('AI Workspace', `${overview.threadCount} / ${overview.explorationCount}`, formatCountSummary(overview.explorationStatuses))}
+        ${renderStatCard('Failed Runs', String(overview.failedRunCount), `${overview.activeRunCount} active · ${overview.runCount} total runs`)}
+        ${renderStatCard('Pending Publish', String(overview.attentionPublishableCases.length), `${overview.testCaseCount} test cases stored`)}
+        ${renderStatCard('Open Explorations', String(overview.attentionExplorations.length), formatCountSummary(overview.explorationStatuses))}
+        ${renderStatCard('Artifacts', String(overview.artifactCount), `${formatBytes(overview.artifactBytes)} in metadata-indexed storage`)}
       </div>
-      <div class="grid-2">
+      <div class="grid-3">
         <div class="card">
           <div class="section-head">
-            <h2>Evidence Summary</h2>
-            ${renderStatus(`${overview.artifactCount} artifacts`)}
+            <h2>Failed Runs</h2>
+            <a class="button secondary" href="${escapeHtml(renderPageLink('/runs', ctx.currentScope, { status: 'failed' }))}">View all</a>
           </div>
-          <div class="grid-2">
-            ${renderStatCard('Stored Bytes', formatBytes(overview.artifactBytes), 'Based on artifact metadata in PostgreSQL')}
-            ${renderStatCard('Artifact Types', String(overview.artifactTypes.length), formatCountSummary(overview.artifactTypes))}
+          <div class="attention-list">
+            ${overview.attentionFailedRuns.length
+              ? overview.attentionFailedRuns.map((item) => `
+                <a class="list-item" href="${escapeHtml(renderPageLink('/runs', ctx.currentScope, { run_id: item.id }))}">
+                  <div class="list-item-head">
+                    <div class="list-item-title">${escapeHtml(displayRunName(item))}</div>
+                    <div class="summary-badges">${renderStatus(item.status)}${item.selectionKind ? renderStatus(item.selectionKind) : ''}</div>
+                  </div>
+                  <div class="list-item-subtitle">${escapeHtml(item.selectionKind ? `Selection ${item.selectionKind}` : 'Run requires inspection')}</div>
+                  <div class="list-item-foot">
+                    <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+                    ${renderSecondaryId(item.id)}
+                  </div>
+                </a>
+              `).join('')
+              : '<div class="empty">No failed runs in the current project.</div>'}
           </div>
         </div>
         <div class="card">
           <div class="section-head">
-            <h2>Entry Points</h2>
-            ${systemStatus ? `<span class="meta">${systemStatus.onlineAgents} agents online · queue ${systemStatus.queuedItems}</span>` : ''}
+            <h2>Cases Pending Publish</h2>
+            <a class="button secondary" href="${escapeHtml(renderPageLink('/assets', ctx.currentScope, { asset_type: 'test-cases', status: 'draft' }))}">Open cases</a>
           </div>
-          <div class="grid-2">
-            <a class="list-item" href="${escapeHtml(`/assets${query}`)}"><strong>Assets</strong><span class="meta">Cases, recordings, datasets</span></a>
-            <a class="list-item" href="${escapeHtml(`/runs${query}`)}"><strong>Runs</strong><span class="meta">Runs, items, step events, evidence</span></a>
-            <a class="list-item" href="${escapeHtml(`/ai-workspace${query}`)}"><strong>AI Workspace</strong><span class="meta">Threads, explorations, memory, artifacts</span></a>
+          <div class="attention-list">
+            ${overview.attentionPublishableCases.length
+              ? overview.attentionPublishableCases.map((item) => `
+                <a class="list-item" href="${escapeHtml(renderPageLink('/assets', ctx.currentScope, { asset_type: 'test-cases', asset_id: item.id }))}">
+                  <div class="list-item-head">
+                    <div class="list-item-title">${escapeHtml(item.name)}</div>
+                    <div class="summary-badges"><span class="badge warning">needs publish</span>${renderStatus(item.status)}</div>
+                  </div>
+                  <div class="list-item-subtitle">
+                    ${escapeHtml(item.latestPublishedVersionId
+                      ? `Latest ${shortId(item.latestVersionId)} is newer than published ${shortId(item.latestPublishedVersionId)}`
+                      : `Latest ${shortId(item.latestVersionId)} has not been published yet`)}
+                  </div>
+                  <div class="list-item-foot">
+                    <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+                    ${renderSecondaryId(item.id)}
+                  </div>
+                </a>
+              `).join('')
+              : '<div class="empty">All latest case versions are already published.</div>'}
           </div>
+        </div>
+        <div class="card">
+          <div class="section-head">
+            <h2>Explorations Requiring Follow-up</h2>
+            <a class="button secondary" href="${escapeHtml(renderPageLink('/ai-workspace', ctx.currentScope, { workspace_view: 'explorations' }))}">Open workspace</a>
+          </div>
+          <div class="attention-list">
+            ${overview.attentionExplorations.length
+              ? overview.attentionExplorations.map((item) => `
+                <a class="list-item" href="${escapeHtml(renderPageLink('/ai-workspace', ctx.currentScope, { workspace_view: 'explorations', exploration_id: item.id }))}">
+                  <div class="list-item-head">
+                    <div class="list-item-title">${escapeHtml(displayExplorationName(item))}</div>
+                    <div class="summary-badges">${renderStatus(item.status)}${item.recordingId ? '<span class="badge info">recording linked</span>' : ''}</div>
+                  </div>
+                  <div class="list-item-subtitle">${escapeHtml(formatUrlLabel(item.startUrl))}</div>
+                  <div class="list-item-foot">
+                    <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+                    ${renderSecondaryId(item.id)}
+                  </div>
+                </a>
+              `).join('')
+              : '<div class="empty">No draft, running, failed, or stopped explorations right now.</div>'}
+          </div>
+        </div>
+      </div>
+      <div class="card stack">
+        <div class="section-head">
+          <h2>Object Coverage</h2>
+          ${systemStatus ? `<span class="meta">${systemStatus.onlineAgents} agents online · queue ${systemStatus.queuedItems}</span>` : ''}
+        </div>
+        <div class="summary-grid three">
+          ${renderSummaryField('Assets', `${overview.testCaseCount} cases / ${overview.recordingCount} recordings`, `${overview.recordingAnalysisCount} analyses · ${formatCountSummary(overview.testCaseStatuses)}`)}
+          ${renderSummaryField('Runs', `${overview.runCount} runs`, `${overview.activeRunCount} active · ${overview.failedRunCount} failed`)}
+          ${renderSummaryField('AI Workspace', `${overview.threadCount} threads / ${overview.explorationCount} explorations`, formatCountSummary(overview.explorationStatuses))}
+          ${renderSummaryField('Artifacts', `${overview.artifactCount} files`, `${formatBytes(overview.artifactBytes)} indexed in DB`)}
+          ${renderSummaryField('Artifact Types', String(overview.artifactTypes.length), formatCountSummary(overview.artifactTypes))}
+          ${renderSummaryField('Analysis Status', String(overview.recordingAnalysisCount), formatCountSummary(overview.recordingAnalysisStatuses))}
         </div>
       </div>
     `;
@@ -854,10 +1189,10 @@ const renderAssetsPage = async (ctx: RouteContext, pathname: string, url: URL): 
     <div class="page-header">
       <div>
         <h1>Assets</h1>
-        <div class="subtitle">Test cases, recordings, versions, templates, dataset rows, and recording history.</div>
+        <div class="subtitle">围绕测试资产做最小闭环操作：一览、筛选、详情、编辑、发布和运行。</div>
       </div>
       <div class="header-actions">
-        ${renderNewAssetActions(ctx.currentScope, `${pathname}?${currentParams.toString()}`)}
+        ${ctx.currentScope ? `<a class="button" href="${escapeHtml(assetType === 'recordings' ? '#create-recording' : '#create-test-case')}">${assetType === 'recordings' ? 'New Recording' : 'New Test Case'}</a>` : ''}
       </div>
     </div>
   `;
@@ -876,6 +1211,19 @@ const renderAssetsPage = async (ctx: RouteContext, pathname: string, url: URL): 
     });
   }
 
+  const assetTabs = renderTabs([
+    {
+      href: renderPageLink(pathname, ctx.currentScope, { asset_type: 'test-cases' }),
+      label: 'Test Cases',
+      active: assetType === 'test-cases',
+    },
+    {
+      href: renderPageLink(pathname, ctx.currentScope, { asset_type: 'recordings' }),
+      label: 'Recordings',
+      active: assetType === 'recordings',
+    },
+  ]);
+
   const listResult = assetType === 'recordings'
     ? await ctx.store.listRecordings(ctx.currentScope.tenantId, ctx.currentScope.projectId, { query, status, sourceType, page: listPage })
     : await ctx.store.listTestCases(ctx.currentScope.tenantId, ctx.currentScope.projectId, { query, status, page: listPage });
@@ -891,16 +1239,18 @@ const renderAssetsPage = async (ctx: RouteContext, pathname: string, url: URL): 
     <form class="filters" method="get" action="${escapeHtml(pathname)}">
       ${hiddenInput('tenant_id', ctx.currentScope.tenantId)}
       ${hiddenInput('project_id', ctx.currentScope.projectId)}
-      <select name="asset_type">
-        <option value="test-cases"${assetType === 'test-cases' ? ' selected' : ''}>Test Cases</option>
-        <option value="recordings"${assetType === 'recordings' ? ' selected' : ''}>Recordings</option>
-      </select>
-      <input type="search" name="query" value="${escapeHtml(query)}" placeholder="Search by name or ID">
-      <select name="status">
-        ${renderOptions(status, ['all', 'draft', 'active', 'archived', 'queued', 'running', 'succeeded', 'failed', 'stopped'])}
-      </select>
-      ${assetType === 'recordings' ? `<select name="source_type">${renderOptions(sourceType, ['all', 'manual', 'auto_explore', 'run_replay'])}</select>` : ''}
-      <button type="submit">Apply</button>
+      ${hiddenInput('asset_type', assetType)}
+      <div class="filter-grid">
+        ${renderFilterField('Search', `<input type="search" name="query" value="${escapeHtml(query)}" placeholder="${assetType === 'recordings' ? 'Recording name or ID' : 'Case name or ID'}">`)}
+        ${renderFilterField('Status', `<select name="status">${renderOptions(status, ['all', 'draft', 'active', 'archived', 'queued', 'running', 'published', 'succeeded', 'failed', 'stopped'])}</select>`)}
+        ${assetType === 'recordings'
+          ? renderFilterField('Source', `<select name="source_type">${renderOptions(sourceType, ['all', 'manual', 'auto_explore', 'run_replay'])}</select>`)
+          : renderFilterField('Focus', '<div class="meta">Covers cases, versions, templates, dataset rows, and latest linked run.</div>')}
+        <div class="filter-actions">
+          <button type="submit">Apply Filters</button>
+          <a class="button secondary" href="${escapeHtml(renderPageLink(pathname, ctx.currentScope, { asset_type: assetType }))}">Reset</a>
+        </div>
+      </div>
     </form>
   `;
 
@@ -921,7 +1271,23 @@ const renderAssetsPage = async (ctx: RouteContext, pathname: string, url: URL): 
     notice: url.searchParams.get('notice'),
     error: url.searchParams.get('error'),
     pageHeader,
-    pageBody: `${filterForm}<div class="page-body"><div class="list">${listMarkup}</div><div class="detail">${detailMarkup}</div></div>`,
+    pageBody: `
+      ${assetTabs}
+      ${filterForm}
+      <div class="page-body">
+        <div class="list">
+          <div class="section-head">
+            <h2>${assetType === 'recordings' ? 'Recordings' : 'Test Cases'}</h2>
+            <span class="meta">${listResult.items.length} items on this page</span>
+          </div>
+          ${listMarkup}
+        </div>
+        <div class="detail">
+          ${renderNewAssetActions(ctx.currentScope, `${pathname}?${currentParams.toString()}`, assetType)}
+          ${detailMarkup}
+        </div>
+      </div>
+    `,
   });
 };
 
@@ -934,12 +1300,22 @@ const renderTestCaseList = (
   const items = listResult.items.map((item) => {
     const params = new URLSearchParams(baseParams);
     params.set('asset_id', item.id);
+    const releaseMeta = item.latestVersionId && item.latestPublishedVersionId === item.latestVersionId
+      ? 'Latest version already published'
+      : item.latestVersionId
+        ? `Latest draft ${shortId(item.latestVersionId)}`
+        : 'No version yet';
     return `
       <a class="list-item${item.id === selectedId ? ' selected' : ''}" href="${escapeHtml(`${pathname}?${params.toString()}`)}">
-        <strong>${escapeHtml(item.name)}</strong>
-        <div class="inline-actions">${renderStatus(item.status)}</div>
-        <div class="meta mono">${escapeHtml(item.id)}</div>
-        <div class="meta">latest ${escapeHtml(item.latestVersionId ?? '—')} · updated ${escapeHtml(item.updatedAt)}</div>
+        <div class="list-item-head">
+          <div class="list-item-title">${escapeHtml(item.name)}</div>
+          <div class="summary-badges">${renderStatus(item.status)}${item.latestVersionId && item.latestPublishedVersionId !== item.latestVersionId ? '<span class="badge warning">needs publish</span>' : ''}</div>
+        </div>
+        <div class="list-item-subtitle">${escapeHtml(releaseMeta)}</div>
+        <div class="list-item-foot">
+          <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+          ${renderSecondaryId(item.id)}
+        </div>
       </a>
     `;
   }).join('');
@@ -957,10 +1333,15 @@ const renderRecordingList = (
     params.set('asset_id', item.id);
     return `
       <a class="list-item${item.id === selectedId ? ' selected' : ''}" href="${escapeHtml(`${pathname}?${params.toString()}`)}">
-        <strong>${escapeHtml(item.name)}</strong>
-        <div class="inline-actions">${renderStatus(item.status)}<span class="badge">${escapeHtml(item.sourceType)}</span></div>
-        <div class="meta mono">${escapeHtml(item.id)}</div>
-        <div class="meta">updated ${escapeHtml(item.updatedAt)}</div>
+        <div class="list-item-head">
+          <div class="list-item-title">${escapeHtml(item.name)}</div>
+          <div class="summary-badges">${renderStatus(item.status)}${renderStatus(item.sourceType)}</div>
+        </div>
+        <div class="list-item-subtitle">Source ${escapeHtml(item.sourceType)} · recording asset</div>
+        <div class="list-item-foot">
+          <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+          ${renderSecondaryId(item.id)}
+        </div>
       </a>
     `;
   }).join('');
@@ -978,6 +1359,11 @@ const renderTestCaseDetailCard = (
   }
   const returnTo = `${pathname}?${params.toString()}&asset_id=${encodeURIComponent(detail.id)}`;
   const latestVersion = detail.versions[0] ?? null;
+  const releaseState = detail.latestVersionId && detail.latestVersionId === detail.latestPublishedVersionId
+    ? 'Latest version is published'
+    : detail.latestVersionId
+      ? 'Latest version is still draft'
+      : 'No version created yet';
   const versionRows = detail.versions.length
     ? `
       <table>
@@ -987,8 +1373,8 @@ const renderTestCaseDetailCard = (
             <tr>
               <td>v${version.versionNo}${version.versionLabel ? ` · ${escapeHtml(version.versionLabel)}` : ''}</td>
               <td>${renderStatus(version.status)}</td>
-              <td class="mono">${escapeHtml(version.sourceRecordingId ?? version.sourceRunId ?? 'manual')}</td>
-              <td>${escapeHtml(version.createdAt)}</td>
+              <td>${escapeHtml(version.sourceRecordingId ? `Recording ${shortId(version.sourceRecordingId)}` : version.sourceRunId ? `Run ${shortId(version.sourceRunId)}` : 'manual')}</td>
+              <td>${escapeHtml(formatDateTime(version.createdAt))}</td>
               <td>
                 <form method="post" action="/actions/test-case-versions/publish">
                   ${hiddenInput('tenant_id', scope.tenantId)}
@@ -1004,120 +1390,187 @@ const renderTestCaseDetailCard = (
       </table>
     `
     : '<div class="empty">No versions yet.</div>';
-  const datasetRows = detail.datasetRows.length
+  const datasetRowsTable = detail.datasetRows.length
+    ? `<table><thead><tr><th>Row</th><th>Status</th><th>Updated</th><th>Role</th></tr></thead><tbody>${detail.datasetRows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.name)}</td>
+        <td>${renderStatus(row.status)}</td>
+        <td>${escapeHtml(formatDateTime(row.updatedAt))}</td>
+        <td>${row.id === latestVersion?.defaultDatasetRowId ? '<span class="badge info">default</span>' : '<span class="meta">optional</span>'}</td>
+      </tr>
+    `).join('')}</tbody></table>`
+    : '<div class="empty">No dataset rows on the latest version.</div>';
+  const datasetEditors = detail.datasetRows.length
     ? detail.datasetRows.map((row) => `
-      <details class="action-panel">
-        <summary>${escapeHtml(row.name)} · ${escapeHtml(row.status)}</summary>
-        <form method="post" action="/actions/dataset-rows/update" style="display:grid; gap:10px; margin-top:12px;">
+      <details class="raw-details">
+        <summary>${escapeHtml(row.name)} · edit values</summary>
+        <form method="post" action="/actions/dataset-rows/update" class="form-grid" style="margin-top:12px;">
           ${hiddenInput('tenant_id', scope.tenantId)}
           ${hiddenInput('project_id', scope.projectId)}
           ${hiddenInput('dataset_row_id', row.id)}
           ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="${escapeHtml(row.name)}">
-          <textarea name="values_json">${escapeHtml(formatJson(row.values))}</textarea>
+          <div class="field">
+            <label class="field-label">Row Name</label>
+            <input name="name" value="${escapeHtml(row.name)}">
+          </div>
+          <div class="field">
+            <label class="field-label">Values JSON</label>
+            <textarea name="values_json">${escapeHtml(formatJson(row.values))}</textarea>
+          </div>
           <button type="submit">Save Dataset Row</button>
         </form>
       </details>
     `).join('')
-    : '<div class="empty">No dataset rows on latest version.</div>';
+    : '';
 
   return `
     <div class="section">
       <div class="section-head">
         <h2>${escapeHtml(detail.name)}</h2>
-        <div class="inline-actions">${renderStatus(detail.status)}<span class="badge mono">${escapeHtml(detail.id)}</span></div>
+        <div class="summary-badges">${renderStatus(detail.status)}${detail.latestVersionId && detail.latestVersionId !== detail.latestPublishedVersionId ? '<span class="badge warning">needs publish</span>' : '<span class="badge success">release aligned</span>'}</div>
       </div>
-      <div class="grid-2">
-        ${renderField('Latest Version', escapeHtml(detail.latestVersionId ?? '—'))}
-        ${renderField('Latest Published Version', escapeHtml(detail.latestPublishedVersionId ?? '—'))}
-        ${renderField('Created At', escapeHtml(detail.createdAt))}
-        ${renderField('Updated At', escapeHtml(detail.updatedAt))}
+      <div class="summary-grid three">
+        ${renderField('Latest Version', escapeHtml(latestVersion ? `v${latestVersion.versionNo}${latestVersion.versionLabel ? ` · ${latestVersion.versionLabel}` : ''}` : '—'))}
+        ${renderField('Release State', escapeHtml(releaseState))}
+        ${renderField('Dataset Rows', String(detail.datasetRows.length))}
+        ${renderField('Versions', String(detail.versions.length))}
+        ${renderField('Created', escapeHtml(formatDateTime(detail.createdAt)))}
+        ${renderField('Updated', escapeHtml(formatDateTime(detail.updatedAt)))}
+      </div>
+      <div class="list-item-foot">
+        ${detail.latestRun ? `<a class="button secondary" href="${escapeHtml(renderPageLink('/runs', scope, { run_id: detail.latestRun.id }))}">Open Latest Run</a>` : '<span class="meta">No linked run yet.</span>'}
+        ${renderSecondaryId(detail.id)}
       </div>
     </div>
     <div class="section">
-      <div class="section-head"><h3>Structure and History</h3></div>
-      <div class="meta">Versions</div>
+      <div class="section-head"><h3>Version History</h3></div>
       ${versionRows}
-      <div class="meta">Data Template</div>
-      ${detail.dataTemplate ? `<pre>${escapeHtml(formatJson(detail.dataTemplate))}</pre>` : '<div class="empty">No data template found.</div>'}
-      <div class="meta">Dataset Rows</div>
-      ${datasetRows}
     </div>
     <div class="section">
-      <div class="section-head"><h3>Linked Data</h3></div>
-      <div class="grid-2">
-        ${renderField('Latest Run', detail.latestRun ? `<a href="/runs${buildQueryString({ ...scopeParams(scope), run_id: detail.latestRun.id })}">${escapeHtml(detail.latestRun.name ?? detail.latestRun.id)}</a>` : '—')}
-        ${renderField('Default Bind Target', escapeHtml(latestVersion?.defaultDatasetRowId ?? '—'))}
+      <div class="section-head"><h3>Template and Dataset</h3></div>
+      <div class="summary-grid">
+        ${renderField('Template Version', escapeHtml(detail.dataTemplate ? shortId(detail.dataTemplate.versionId) : '—'))}
+        ${renderField('Default Dataset Row', escapeHtml(latestVersion?.defaultDatasetRowId ? shortId(latestVersion.defaultDatasetRowId) : '—'))}
       </div>
+      ${datasetRowsTable}
+      ${detail.dataTemplate
+        ? renderRawJson('Raw data template', detail.dataTemplate)
+        : '<div class="empty">No data template found.</div>'}
+      ${datasetEditors}
     </div>
     <div class="section">
       <div class="section-head"><h3>Actions</h3></div>
-      ${renderActionPanel('Edit Test Case', `
-        <form method="post" action="/actions/test-cases/update" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('test_case_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="${escapeHtml(detail.name)}">
-          <select name="status">${renderOptions(detail.status, ['draft', 'active', 'archived'])}</select>
-          <button type="submit">Save Test Case</button>
-        </form>
-      `)}
-      ${renderActionPanel('Create Version', `
-        <form method="post" action="/actions/test-cases/create-version" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('test_case_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="version_label" placeholder="Version label" value="console-update">
-          <input name="change_summary" placeholder="Change summary" value="created from console">
-          <textarea name="plan_json">${escapeHtml(formatJson(latestVersion?.plan ?? DEFAULT_PLAN))}</textarea>
-          <textarea name="env_profile_json">${escapeHtml(formatJson(latestVersion?.envProfile ?? DEFAULT_ENV_PROFILE))}</textarea>
-          <label><input type="checkbox" name="publish" value="true"> Publish immediately</label>
-          <button type="submit">Create Version</button>
-        </form>
-      `)}
-      ${renderActionPanel('Dataset Actions', `
-        <form method="post" action="/actions/test-case-versions/create-dataset-row" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('version_id', latestVersion?.id ?? '')}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" placeholder="Dataset row name" value="console-row">
-          <textarea name="values_json">{}</textarea>
-          <button type="submit"${latestVersion ? '' : ' disabled'}>Create Dataset Row</button>
-        </form>
-        <form method="post" action="/actions/test-case-versions/bind-default-dataset" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('version_id', latestVersion?.id ?? '')}
-          ${hiddenInput('return_to', returnTo)}
-          <select name="dataset_row_id">
-            ${detail.datasetRows.map((row) => `<option value="${escapeHtml(row.id)}"${row.id === latestVersion?.defaultDatasetRowId ? ' selected' : ''}>${escapeHtml(row.name)}</option>`).join('')}
-          </select>
-          <button type="submit"${latestVersion && detail.datasetRows.length ? '' : ' disabled'}>Bind Default Dataset Row</button>
-        </form>
-      `)}
-      ${renderActionPanel('Run Latest Published Version', `
-        <form method="post" action="/actions/test-cases/run-latest-published" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('test_case_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="${escapeHtml(`${detail.name} replay`)}">
-          <input name="dataset_row_id" value="${escapeHtml(latestVersion?.defaultDatasetRowId ?? '')}" placeholder="Optional dataset row id">
-          <button type="submit"${detail.latestPublishedVersionId ? '' : ' disabled'}>Run Latest Published Version</button>
-        </form>
-      `)}
-      ${renderActionPanel('Archive Test Case', `
-        <form method="post" action="/actions/test-cases/archive">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('test_case_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <button type="submit" class="secondary">Archive</button>
-        </form>
-      `)}
+      <div class="action-grid">
+        ${renderActionCard('Edit Case', 'Rename or change the lifecycle state of this test case.', `
+          <form method="post" action="/actions/test-cases/update" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('test_case_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Case Name</label>
+              <input name="name" value="${escapeHtml(detail.name)}">
+            </div>
+            <div class="field">
+              <label class="field-label">Status</label>
+              <select name="status">${renderOptions(detail.status, ['draft', 'active', 'archived'])}</select>
+            </div>
+            <button type="submit">Save Case</button>
+          </form>
+        `)}
+        ${renderActionCard('Create Version', 'Add a new draft version and optionally publish it immediately.', `
+          <form method="post" action="/actions/test-cases/create-version" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('test_case_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="form-row">
+              <div class="field">
+                <label class="field-label">Version Label</label>
+                <input name="version_label" placeholder="Version label" value="console-update">
+              </div>
+              <div class="field">
+                <label class="field-label">Change Summary</label>
+                <input name="change_summary" placeholder="Change summary" value="created from console">
+              </div>
+            </div>
+            <label class="meta"><input type="checkbox" name="publish" value="true"> Publish immediately</label>
+            <details class="raw-details">
+              <summary>Advanced payload</summary>
+              <div class="form-grid" style="margin-top: 12px;">
+                <div class="field">
+                  <label class="field-label">Plan JSON</label>
+                  <textarea name="plan_json">${escapeHtml(formatJson(latestVersion?.plan ?? DEFAULT_PLAN))}</textarea>
+                </div>
+                <div class="field">
+                  <label class="field-label">Environment Profile JSON</label>
+                  <textarea name="env_profile_json">${escapeHtml(formatJson(latestVersion?.envProfile ?? DEFAULT_ENV_PROFILE))}</textarea>
+                </div>
+              </div>
+            </details>
+            <button type="submit">Create Version</button>
+          </form>
+        `)}
+        ${renderActionCard('Dataset Operations', 'Create rows and bind the default row used by the latest version.', `
+          <div class="form-grid">
+            <form method="post" action="/actions/test-case-versions/create-dataset-row" class="form-grid">
+              ${hiddenInput('tenant_id', scope.tenantId)}
+              ${hiddenInput('project_id', scope.projectId)}
+              ${hiddenInput('version_id', latestVersion?.id ?? '')}
+              ${hiddenInput('return_to', returnTo)}
+              <div class="field">
+                <label class="field-label">New Row Name</label>
+                <input name="name" placeholder="Dataset row name" value="console-row">
+              </div>
+              <div class="field">
+                <label class="field-label">Values JSON</label>
+                <textarea name="values_json">{}</textarea>
+              </div>
+              <button type="submit"${latestVersion ? '' : ' disabled'}>Create Dataset Row</button>
+            </form>
+            <div class="divider"></div>
+            <form method="post" action="/actions/test-case-versions/bind-default-dataset" class="form-grid">
+              ${hiddenInput('tenant_id', scope.tenantId)}
+              ${hiddenInput('project_id', scope.projectId)}
+              ${hiddenInput('version_id', latestVersion?.id ?? '')}
+              ${hiddenInput('return_to', returnTo)}
+              <div class="field">
+                <label class="field-label">Default Row</label>
+                <select name="dataset_row_id">
+                  ${detail.datasetRows.map((row) => `<option value="${escapeHtml(row.id)}"${row.id === latestVersion?.defaultDatasetRowId ? ' selected' : ''}>${escapeHtml(row.name)}</option>`).join('')}
+                </select>
+              </div>
+              <button type="submit"${latestVersion && detail.datasetRows.length ? '' : ' disabled'}>Bind Default Row</button>
+            </form>
+          </div>
+        `)}
+        ${renderActionCard('Run or Archive', 'Run the latest published version, or archive this case when it is no longer used.', `
+          <div class="form-grid">
+            <form method="post" action="/actions/test-cases/run-latest-published" class="form-grid">
+              ${hiddenInput('tenant_id', scope.tenantId)}
+              ${hiddenInput('project_id', scope.projectId)}
+              ${hiddenInput('test_case_id', detail.id)}
+              ${hiddenInput('return_to', returnTo)}
+              <div class="field">
+                <label class="field-label">Run Name</label>
+                <input name="name" value="${escapeHtml(`${detail.name} replay`)}">
+              </div>
+              <div class="field">
+                <label class="field-label">Dataset Row ID</label>
+                <input name="dataset_row_id" value="${escapeHtml(latestVersion?.defaultDatasetRowId ?? '')}" placeholder="Optional dataset row id">
+              </div>
+              <button type="submit"${detail.latestPublishedVersionId ? '' : ' disabled'}>Run Latest Published</button>
+            </form>
+            <form method="post" action="/actions/test-cases/archive">
+              ${hiddenInput('tenant_id', scope.tenantId)}
+              ${hiddenInput('project_id', scope.projectId)}
+              ${hiddenInput('test_case_id', detail.id)}
+              ${hiddenInput('return_to', returnTo)}
+              <button type="submit" class="secondary">Archive Test Case</button>
+            </form>
+          </div>
+        `)}
+      </div>
     </div>
   `;
 };
@@ -1136,87 +1589,149 @@ const renderRecordingDetailCard = (
     <div class="section">
       <div class="section-head">
         <h2>${escapeHtml(detail.name)}</h2>
-        <div class="inline-actions">${renderStatus(detail.status)}<span class="badge">${escapeHtml(detail.sourceType)}</span><span class="badge mono">${escapeHtml(detail.id)}</span></div>
+        <div class="summary-badges">${renderStatus(detail.status)}${renderStatus(detail.sourceType)}</div>
       </div>
-      <div class="grid-2">
-        ${renderField('Started At', escapeHtml(detail.startedAt))}
-        ${renderField('Finished At', escapeHtml(detail.finishedAt ?? '—'))}
+      <div class="summary-grid three">
+        ${renderField('Started', escapeHtml(formatDateTime(detail.startedAt)))}
+        ${renderField('Finished', escapeHtml(formatDateTime(detail.finishedAt ?? '—')))}
+        ${renderField('Events', String(detail.events.length))}
+        ${renderField('Analysis Jobs', String(detail.analysisJobs.length))}
+        ${renderField('Derived Cases', String(detail.derivedCases.length))}
+        ${renderField('Source', escapeHtml(detail.sourceType))}
       </div>
-      <pre>${escapeHtml(formatJson(detail.envProfile))}</pre>
+      <div class="list-item-foot">
+        <span class="meta">Updated ${escapeHtml(formatDateTime(detail.updatedAt))}</span>
+        ${renderSecondaryId(detail.id)}
+      </div>
     </div>
     <div class="section">
       <div class="section-head"><h3>Recording Events</h3></div>
-      ${detail.events.length ? `<table><thead><tr><th>#</th><th>Type</th><th>Page</th><th>Captured</th></tr></thead><tbody>${detail.events.map((event) => `<tr><td>${event.seqNo}</td><td>${escapeHtml(event.eventType)}</td><td class="mono">${escapeHtml(event.pageUrl ?? '—')}</td><td>${escapeHtml(event.capturedAt)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No recording events.</div>'}
+      ${detail.events.length ? `<table><thead><tr><th>#</th><th>Type</th><th>Page</th><th>Captured</th></tr></thead><tbody>${detail.events.map((event) => `<tr><td>${event.seqNo}</td><td>${escapeHtml(event.eventType)}</td><td>${escapeHtml(formatUrlLabel(event.pageUrl ?? '—'))}</td><td>${escapeHtml(formatDateTime(event.capturedAt))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No recording events.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Analysis Jobs</h3></div>
-      ${detail.analysisJobs.length ? `<table><thead><tr><th>ID</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead><tbody>${detail.analysisJobs.map((job) => `<tr><td class="mono">${escapeHtml(job.id)}</td><td>${renderStatus(job.status)}</td><td>${escapeHtml(job.startedAt)}</td><td>${escapeHtml(job.finishedAt ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No analysis jobs yet.</div>'}
+      ${detail.analysisJobs.length ? `<table><thead><tr><th>Job</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead><tbody>${detail.analysisJobs.map((job) => `<tr><td title="${escapeHtml(job.id)}">${escapeHtml(shortId(job.id))}</td><td>${renderStatus(job.status)}</td><td>${escapeHtml(formatDateTime(job.startedAt))}</td><td>${escapeHtml(formatDateTime(job.finishedAt ?? '—'))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No analysis jobs yet.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Derived Cases</h3></div>
-      ${detail.derivedCases.length ? `<table><thead><tr><th>Case</th><th>Version</th><th>Status</th><th>Created</th></tr></thead><tbody>${detail.derivedCases.map((item) => `<tr><td><a href="/assets${buildQueryString({ ...scopeParams(scope), asset_type: 'test-cases', asset_id: item.testCaseId })}">${escapeHtml(item.caseName)}</a></td><td class="mono">${escapeHtml(item.versionId)}</td><td>${renderStatus(item.status)}</td><td>${escapeHtml(item.createdAt)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No derived cases yet.</div>'}
+      ${detail.derivedCases.length ? `<table><thead><tr><th>Case</th><th>Version</th><th>Status</th><th>Created</th></tr></thead><tbody>${detail.derivedCases.map((item) => `<tr><td><a href="${escapeHtml(renderPageLink('/assets', scope, { asset_type: 'test-cases', asset_id: item.testCaseId }))}">${escapeHtml(item.caseName)}</a></td><td title="${escapeHtml(item.versionId)}">${escapeHtml(shortId(item.versionId))}</td><td>${renderStatus(item.status)}</td><td>${escapeHtml(formatDateTime(item.createdAt))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No derived cases yet.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Actions</h3></div>
-      ${renderActionPanel('Analyze DSL', `
-        <form method="post" action="/actions/recordings/analyze">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('recording_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <button type="submit">Analyze DSL</button>
-        </form>
-      `)}
-      ${renderActionPanel('Publish as Test Case', `
-        <form method="post" action="/actions/recordings/publish" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('recording_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="${escapeHtml(`${detail.name} case`)}">
-          <input name="version_label" value="recording-v1">
-          <input name="change_summary" value="published from console">
-          <label><input type="checkbox" name="publish" value="true" checked> Publish immediately</label>
-          <textarea name="default_dataset_json">{}</textarea>
-          <button type="submit">Publish as Test Case</button>
-        </form>
-      `)}
+      <div class="action-grid">
+        ${renderActionCard('Analyze DSL', 'Start the current recording analysis job against this source recording.', `
+          <form method="post" action="/actions/recordings/analyze">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('recording_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <button type="submit">Analyze DSL</button>
+          </form>
+        `)}
+        ${renderActionCard('Publish as Test Case', 'Create a case from this recording and optionally publish the first version.', `
+          <form method="post" action="/actions/recordings/publish" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('recording_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Case Name</label>
+              <input name="name" value="${escapeHtml(`${detail.name} case`)}">
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label class="field-label">Version Label</label>
+                <input name="version_label" value="recording-v1">
+              </div>
+              <div class="field">
+                <label class="field-label">Change Summary</label>
+                <input name="change_summary" value="published from console">
+              </div>
+            </div>
+            <label class="meta"><input type="checkbox" name="publish" value="true" checked> Publish immediately</label>
+            <details class="raw-details">
+              <summary>Default dataset JSON</summary>
+              <div class="field" style="margin-top: 12px;">
+                <textarea name="default_dataset_json">{}</textarea>
+              </div>
+            </details>
+            <button type="submit">Publish Test Case</button>
+          </form>
+        `)}
+      </div>
+      ${renderRawJson('Raw environment profile', detail.envProfile)}
     </div>
   `;
 };
 
-const renderNewAssetActions = (scope: ProjectScope | null, returnTo: string): string => {
+const renderNewAssetActions = (scope: ProjectScope | null, returnTo: string, assetType: 'test-cases' | 'recordings'): string => {
   if (!scope) {
     return '';
   }
-  return [
-    renderActionPanel('New Test Case', `
-      <form method="post" action="/actions/test-cases/create" style="display:grid; gap:10px;">
+  if (assetType === 'recordings') {
+    return renderActionCard('New Recording', 'Create a recording object backed by the current project scope.', `
+      <form method="post" action="/actions/recordings/create" class="form-grid">
         ${hiddenInput('tenant_id', scope.tenantId)}
         ${hiddenInput('project_id', scope.projectId)}
         ${hiddenInput('return_to', returnTo)}
-        <input name="name" value="console-test-case">
-        <input name="version_label" value="v1">
-        <input name="change_summary" value="created from console">
-        <textarea name="plan_json">${escapeHtml(formatJson(DEFAULT_PLAN))}</textarea>
-        <textarea name="env_profile_json">${escapeHtml(formatJson(DEFAULT_ENV_PROFILE))}</textarea>
-        <label><input type="checkbox" name="publish" value="true"> Publish immediately</label>
-        <textarea name="default_dataset_json">{}</textarea>
-        <button type="submit">Create Test Case</button>
-      </form>
-    `),
-    renderActionPanel('New Recording', `
-      <form method="post" action="/actions/recordings/create" style="display:grid; gap:10px;">
-        ${hiddenInput('tenant_id', scope.tenantId)}
-        ${hiddenInput('project_id', scope.projectId)}
-        ${hiddenInput('return_to', returnTo)}
-        <input name="name" value="console-recording">
-        <select name="source_type">${renderOptions('manual', ['manual', 'auto_explore', 'run_replay'])}</select>
-        <textarea name="env_profile_json">${escapeHtml(formatJson(DEFAULT_ENV_PROFILE))}</textarea>
+        <div class="field">
+          <label class="field-label">Recording Name</label>
+          <input name="name" value="console-recording">
+        </div>
+        <div class="field">
+          <label class="field-label">Source Type</label>
+          <select name="source_type">${renderOptions('manual', ['manual', 'auto_explore', 'run_replay'])}</select>
+        </div>
+        <details class="raw-details">
+          <summary>Environment profile JSON</summary>
+          <div class="field" style="margin-top: 12px;">
+            <textarea name="env_profile_json">${escapeHtml(formatJson(DEFAULT_ENV_PROFILE))}</textarea>
+          </div>
+        </details>
         <button type="submit">Create Recording</button>
       </form>
-    `),
-  ].join('');
+    `, 'create-recording');
+  }
+  return renderActionCard('New Test Case', 'Create a case, seed the first version, and optionally publish it.', `
+    <form method="post" action="/actions/test-cases/create" class="form-grid">
+      ${hiddenInput('tenant_id', scope.tenantId)}
+      ${hiddenInput('project_id', scope.projectId)}
+      ${hiddenInput('return_to', returnTo)}
+      <div class="field">
+        <label class="field-label">Case Name</label>
+        <input name="name" value="console-test-case">
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label class="field-label">Version Label</label>
+          <input name="version_label" value="v1">
+        </div>
+        <div class="field">
+          <label class="field-label">Change Summary</label>
+          <input name="change_summary" value="created from console">
+        </div>
+      </div>
+      <label class="meta"><input type="checkbox" name="publish" value="true"> Publish immediately</label>
+      <details class="raw-details">
+        <summary>Advanced plan and environment payload</summary>
+        <div class="form-grid" style="margin-top: 12px;">
+          <div class="field">
+            <label class="field-label">Plan JSON</label>
+            <textarea name="plan_json">${escapeHtml(formatJson(DEFAULT_PLAN))}</textarea>
+          </div>
+          <div class="field">
+            <label class="field-label">Environment Profile JSON</label>
+            <textarea name="env_profile_json">${escapeHtml(formatJson(DEFAULT_ENV_PROFILE))}</textarea>
+          </div>
+          <div class="field">
+            <label class="field-label">Default Dataset JSON</label>
+            <textarea name="default_dataset_json">{}</textarea>
+          </div>
+        </div>
+      </details>
+      <button type="submit">Create Test Case</button>
+    </form>
+  `, 'create-test-case');
 };
 
 const renderRunsPage = async (ctx: RouteContext, pathname: string, url: URL): Promise<string> => {
@@ -1238,10 +1753,10 @@ const renderRunsPage = async (ctx: RouteContext, pathname: string, url: URL): Pr
     <div class="page-header">
       <div>
         <h1>Runs</h1>
-        <div class="subtitle">Runs, items, step events, artifacts, and AI diagnostics.</div>
+        <div class="subtitle">围绕运行结果做判断和处置：看失败、看证据、评估、自愈、抽取用例。</div>
       </div>
       <div class="header-actions">
-        ${ctx.currentScope ? renderNewRunAction(ctx.currentScope, `${pathname}?${currentParams.toString()}`) : ''}
+        ${ctx.currentScope ? '<a class="button" href="#create-run">New Run</a>' : ''}
       </div>
     </div>
   `;
@@ -1272,10 +1787,15 @@ const renderRunsPage = async (ctx: RouteContext, pathname: string, url: URL): Pr
     <form class="filters" method="get" action="${escapeHtml(pathname)}">
       ${hiddenInput('tenant_id', ctx.currentScope.tenantId)}
       ${hiddenInput('project_id', ctx.currentScope.projectId)}
-      <input type="search" name="query" value="${escapeHtml(queryValue)}" placeholder="Search by run name or ID">
-      <select name="status">${renderOptions(status, ['all', 'queued', 'running', 'passed', 'failed', 'canceled'])}</select>
-      <select name="selection_kind">${renderOptions(selectionKind, ['all', 'inline_web_plan', 'case_version'])}</select>
-      <button type="submit">Apply</button>
+      <div class="filter-grid">
+        ${renderFilterField('Search', `<input type="search" name="query" value="${escapeHtml(queryValue)}" placeholder="Run name or ID">`)}
+        ${renderFilterField('Status', `<select name="status">${renderOptions(status, ['all', 'queued', 'running', 'passed', 'failed', 'canceled'])}</select>`)}
+        ${renderFilterField('Selection', `<select name="selection_kind">${renderOptions(selectionKind, ['all', 'inline_web_plan', 'case_version'])}</select>`)}
+        <div class="filter-actions">
+          <button type="submit">Apply Filters</button>
+          <a class="button secondary" href="${escapeHtml(renderPageLink(pathname, ctx.currentScope))}">Reset</a>
+        </div>
+      </div>
     </form>
   `;
   const listMarkup = renderRunList(pathname, currentParams, listResult, selectedRunId);
@@ -1295,7 +1815,22 @@ const renderRunsPage = async (ctx: RouteContext, pathname: string, url: URL): Pr
     notice: url.searchParams.get('notice'),
     error: url.searchParams.get('error'),
     pageHeader,
-    pageBody: `${filterForm}<div class="page-body"><div class="list">${listMarkup}</div><div class="detail">${detailMarkup}</div></div>`,
+    pageBody: `
+      ${filterForm}
+      <div class="page-body">
+        <div class="list">
+          <div class="section-head">
+            <h2>Run Queue</h2>
+            <span class="meta">${listResult.items.length} items on this page</span>
+          </div>
+          ${listMarkup}
+        </div>
+        <div class="detail">
+          ${ctx.currentScope ? renderNewRunAction(ctx.currentScope, `${pathname}?${currentParams.toString()}`) : ''}
+          ${detailMarkup}
+        </div>
+      </div>
+    `,
   });
 };
 
@@ -1305,10 +1840,15 @@ const renderRunList = (pathname: string, params: URLSearchParams, listResult: Pa
     next.set('run_id', item.id);
     return `
       <a class="list-item${item.id === selectedRunId ? ' selected' : ''}" href="${escapeHtml(`${pathname}?${next.toString()}`)}">
-        <strong>${escapeHtml(item.name ?? item.id)}</strong>
-        <div class="inline-actions">${renderStatus(item.status)}${item.selectionKind ? `<span class="badge">${escapeHtml(item.selectionKind)}</span>` : ''}</div>
-        <div class="meta mono">${escapeHtml(item.id)}</div>
-        <div class="meta">updated ${escapeHtml(item.updatedAt)}</div>
+        <div class="list-item-head">
+          <div class="list-item-title">${escapeHtml(displayRunName(item))}</div>
+          <div class="summary-badges">${renderStatus(item.status)}${item.selectionKind ? renderStatus(item.selectionKind) : ''}</div>
+        </div>
+        <div class="list-item-subtitle">${escapeHtml(item.selectionKind ? `Selection ${item.selectionKind}` : 'Run record')}</div>
+        <div class="list-item-foot">
+          <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+          ${renderSecondaryId(item.id)}
+        </div>
       </a>
     `;
   }).join('');
@@ -1329,6 +1869,7 @@ const renderRunDetailCard = (
     return '<div class="empty">Select a run to view details.</div>';
   }
   const returnTo = `${pathname}?${params.toString()}&run_id=${encodeURIComponent(detail.id)}${detail.selectedRunItemId ? `&run_item_id=${encodeURIComponent(detail.selectedRunItemId)}` : ''}`;
+  const selectedRunItem = detail.runItems.find((item) => item.id === detail.selectedRunItemId) ?? null;
   const runItemRows = detail.runItems.length
     ? detail.runItems.map((item) => {
         const next = new URLSearchParams(params);
@@ -1336,12 +1877,12 @@ const renderRunDetailCard = (
         next.set('run_item_id', item.id);
         return `
           <tr>
-            <td><a href="${escapeHtml(`${pathname}?${next.toString()}`)}">${escapeHtml(item.id)}</a></td>
+            <td><a href="${escapeHtml(`${pathname}?${next.toString()}`)}" title="${escapeHtml(item.id)}">Item ${escapeHtml(shortId(item.id))}</a></td>
             <td>${renderStatus(item.status)}</td>
             <td>${escapeHtml(item.jobKind)}</td>
-            <td class="mono">${escapeHtml(item.testCaseVersionId ?? '—')}</td>
-            <td class="mono">${escapeHtml(item.datasetRowId ?? '—')}</td>
-            <td class="mono">${escapeHtml(item.assignedAgentId ?? '—')}</td>
+            <td title="${escapeHtml(item.testCaseVersionId ?? '')}">${escapeHtml(item.testCaseVersionId ? shortId(item.testCaseVersionId) : '—')}</td>
+            <td title="${escapeHtml(item.datasetRowId ?? '')}">${escapeHtml(item.datasetRowId ? shortId(item.datasetRowId) : '—')}</td>
+            <td title="${escapeHtml(item.assignedAgentId ?? '')}">${escapeHtml(item.assignedAgentId ? shortId(item.assignedAgentId) : '—')}</td>
           </tr>
         `;
       }).join('')
@@ -1350,16 +1891,35 @@ const renderRunDetailCard = (
   return `
     <div class="section">
       <div class="section-head">
-        <h2>${escapeHtml(detail.name ?? detail.id)}</h2>
-        <div class="inline-actions">${renderStatus(detail.status)}${detail.selectionKind ? `<span class="badge">${escapeHtml(detail.selectionKind)}</span>` : ''}<span class="badge mono">${escapeHtml(detail.id)}</span></div>
+        <h2>${escapeHtml(displayRunName(detail))}</h2>
+        <div class="summary-badges">${renderStatus(detail.status)}${detail.selectionKind ? renderStatus(detail.selectionKind) : ''}</div>
       </div>
-      <div class="grid-2">
+      <div class="summary-grid three">
         ${renderField('Mode', escapeHtml(detail.mode ?? '—'))}
-        ${renderField('Selection Kind', escapeHtml(detail.selectionKind ?? '—'))}
-        ${renderField('Started At', escapeHtml(detail.startedAt ?? '—'))}
-        ${renderField('Finished At', escapeHtml(detail.finishedAt ?? '—'))}
+        ${renderField('Selection', escapeHtml(detail.selectionKind ?? '—'))}
+        ${renderField('Run Items', String(detail.runItems.length))}
+        ${renderField('Artifacts', String(detail.artifacts.length))}
+        ${renderField('Started', escapeHtml(formatDateTime(detail.startedAt ?? '—')))}
+        ${renderField('Finished', escapeHtml(formatDateTime(detail.finishedAt ?? '—')))}
       </div>
-      <div class="meta mono">Last Event ${escapeHtml(detail.lastEventId)}</div>
+      <div class="list-item-foot">
+        <span class="meta">Updated ${escapeHtml(formatDateTime(detail.updatedAt))}</span>
+        ${renderSecondaryId(detail.id)}
+      </div>
+      <div class="meta mono">Last event ${escapeHtml(shortId(detail.lastEventId))}</div>
+    </div>
+    <div class="section">
+      <div class="section-head"><h3>Selected Run Item</h3></div>
+      ${selectedRunItem ? `
+        <div class="summary-grid three">
+          ${renderField('Run Item', escapeHtml(shortId(selectedRunItem.id)))}
+          ${renderField('Attempt', String(selectedRunItem.attemptNo))}
+          ${renderField('Job Kind', escapeHtml(selectedRunItem.jobKind))}
+          ${renderField('Case Version', escapeHtml(selectedRunItem.testCaseVersionId ? shortId(selectedRunItem.testCaseVersionId) : '—'))}
+          ${renderField('Dataset', escapeHtml(selectedRunItem.datasetRowId ? shortId(selectedRunItem.datasetRowId) : '—'))}
+          ${renderField('Agent', escapeHtml(selectedRunItem.assignedAgentId ? shortId(selectedRunItem.assignedAgentId) : '—'))}
+        </div>
+      ` : '<div class="empty">This run does not have a selected run item yet.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Run Items</h3></div>
@@ -1367,11 +1927,11 @@ const renderRunDetailCard = (
     </div>
     <div class="section">
       <div class="section-head"><h3>Step Events</h3></div>
-      ${detail.stepEvents.length ? `<table><thead><tr><th>Step</th><th>Status</th><th>Started</th><th>Finished</th><th>Duration</th><th>Error</th></tr></thead><tbody>${detail.stepEvents.map((event) => `<tr><td class="mono">${escapeHtml(event.sourceStepId)}</td><td>${renderStatus(event.status)}</td><td>${escapeHtml(event.startedAt)}</td><td>${escapeHtml(event.finishedAt)}</td><td>${event.durationMs}ms</td><td>${escapeHtml(event.errorCode ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No step events for selected run item.</div>'}
+      ${detail.stepEvents.length ? `<table><thead><tr><th>Step</th><th>Status</th><th>Started</th><th>Finished</th><th>Duration</th><th>Error</th></tr></thead><tbody>${detail.stepEvents.map((event) => `<tr><td class="mono">${escapeHtml(event.sourceStepId)}</td><td>${renderStatus(event.status)}</td><td>${escapeHtml(formatDateTime(event.startedAt))}</td><td>${escapeHtml(formatDateTime(event.finishedAt))}</td><td>${event.durationMs}ms</td><td>${escapeHtml(event.errorCode ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No step events for the selected run item.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Evidence</h3></div>
-      ${detail.artifacts.length ? `<table><thead><tr><th>Artifact</th><th>Content Type</th><th>Size</th><th>Created</th><th></th></tr></thead><tbody>${detail.artifacts.map((artifact) => `<tr><td>${escapeHtml(artifact.artifactType)}</td><td>${escapeHtml(artifact.contentType ?? '—')}</td><td>${escapeHtml(artifact.sizeBytes === null ? '—' : formatBytes(artifact.sizeBytes))}</td><td>${escapeHtml(artifact.createdAt)}</td><td>${renderArtifactLink(artifact, controlPlanePublicBaseUrl)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No artifacts for selected run item.</div>'}
+      ${detail.artifacts.length ? `<table><thead><tr><th>Artifact</th><th>Content Type</th><th>Size</th><th>Created</th><th></th></tr></thead><tbody>${detail.artifacts.map((artifact) => `<tr><td>${escapeHtml(artifact.artifactType)}</td><td>${escapeHtml(artifact.contentType ?? '—')}</td><td>${escapeHtml(artifact.sizeBytes === null ? '—' : formatBytes(artifact.sizeBytes))}</td><td>${escapeHtml(formatDateTime(artifact.createdAt))}</td><td>${renderArtifactLink(artifact, controlPlanePublicBaseUrl)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No artifacts for the selected run item.</div>'}
       <div class="meta">Artifact downloads are served through control-plane.</div>
     </div>
     <div class="section">
@@ -1379,71 +1939,113 @@ const renderRunDetailCard = (
       <div class="grid-2">
         <div>
           <div class="meta" style="margin-bottom:8px;">Self-heal Attempts</div>
-          ${detail.selfHealAttempts.length ? detail.selfHealAttempts.map((attempt) => `<div class="list-item"><strong>${escapeHtml(attempt.id)}</strong><div class="inline-actions">${renderStatus(attempt.status)}</div><div class="meta">${escapeHtml(attempt.explanation ?? 'No explanation')}</div><div class="meta mono">replay ${escapeHtml(attempt.replayRunId ?? '—')} · derived ${escapeHtml(attempt.derivedTestCaseVersionId ?? '—')}</div></div>`).join('') : '<div class="empty">No self-heal attempts yet.</div>'}
+          ${detail.selfHealAttempts.length ? detail.selfHealAttempts.map((attempt) => `<div class="list-item"><div class="list-item-head"><div class="list-item-title">Attempt ${escapeHtml(shortId(attempt.id))}</div><div class="summary-badges">${renderStatus(attempt.status)}${attempt.replayRunStatus ? renderStatus(attempt.replayRunStatus) : ''}</div></div><div class="list-item-subtitle">${escapeHtml(attempt.explanation ?? 'No explanation')}</div><div class="list-item-foot"><span class="meta">Created ${escapeHtml(formatDateTime(attempt.createdAt))}</span><span class="meta mono">Replay ${escapeHtml(attempt.replayRunId ? shortId(attempt.replayRunId) : '—')} · Derived ${escapeHtml(attempt.derivedTestCaseVersionId ? shortId(attempt.derivedTestCaseVersionId) : '—')}</span></div></div>`).join('') : '<div class="empty">No self-heal attempts yet.</div>'}
         </div>
         <div>
           <div class="meta" style="margin-bottom:8px;">Run Evaluations</div>
-          ${detail.runEvaluations.length ? detail.runEvaluations.map((evaluation) => `<div class="list-item"><strong>${escapeHtml(evaluation.id)}</strong><div class="inline-actions">${renderStatus(evaluation.verdict)}</div><div class="meta">${escapeHtml(evaluation.explanation)}</div><div class="meta mono">${escapeHtml(evaluation.linkedArtifactIds.join(', ') || 'No linked artifacts')}</div></div>`).join('') : '<div class="empty">No run evaluations yet.</div>'}
+          ${detail.runEvaluations.length ? detail.runEvaluations.map((evaluation) => `<div class="list-item"><div class="list-item-head"><div class="list-item-title">Evaluation ${escapeHtml(shortId(evaluation.id))}</div><div class="summary-badges">${renderStatus(evaluation.verdict)}</div></div><div class="list-item-subtitle">${escapeHtml(evaluation.explanation)}</div><div class="list-item-foot"><span class="meta">Created ${escapeHtml(formatDateTime(evaluation.createdAt))}</span><span class="meta mono">${escapeHtml(evaluation.linkedArtifactIds.length ? evaluation.linkedArtifactIds.map((artifactId) => shortId(artifactId)).join(', ') : 'No linked artifacts')}</span></div></div>`).join('') : '<div class="empty">No run evaluations yet.</div>'}
         </div>
       </div>
     </div>
     <div class="section">
       <div class="section-head"><h3>Actions</h3></div>
-      ${renderActionPanel('Cancel Run', `
-        <form method="post" action="/actions/runs/cancel">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('run_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <button type="submit" class="secondary">Cancel</button>
-        </form>
-      `)}
-      ${renderActionPanel('Run Item Actions', `
-        <form method="post" action="/actions/run-items/evaluate" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('run_item_id', detail.selectedRunItemId ?? '')}
-          ${hiddenInput('return_to', returnTo)}
-          <button type="submit"${detail.selectedRunItemId ? '' : ' disabled'}>Evaluate</button>
-        </form>
-        <form method="post" action="/actions/run-items/self-heal" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('run_item_id', detail.selectedRunItemId ?? '')}
-          ${hiddenInput('return_to', returnTo)}
-          <label><input type="checkbox" name="derive_draft_version" value="true" checked> Derive draft version on success</label>
-          <button type="submit"${detail.selectedRunItemId ? '' : ' disabled'}>Self-heal</button>
-        </form>
-        <form method="post" action="/actions/run-items/extract-test-case" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('run_item_id', detail.selectedRunItemId ?? '')}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="console-extracted-case">
-          <input name="version_label" value="derived-v1">
-          <input name="change_summary" value="extracted from console">
-          <label><input type="checkbox" name="publish" value="true"> Publish immediately</label>
-          <button type="submit"${detail.selectedRunItemId ? '' : ' disabled'}>Extract Test Case</button>
-        </form>
-      `)}
+      <div class="action-grid">
+        ${renderActionCard('Cancel Run', 'Stop the current run when it should no longer continue.', `
+          <form method="post" action="/actions/runs/cancel">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('run_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <button type="submit" class="secondary">Cancel Run</button>
+          </form>
+        `)}
+        ${renderActionCard('Evaluate Selected Item', 'Run AI evaluation for the currently selected run item.', `
+          <form method="post" action="/actions/run-items/evaluate">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('run_item_id', detail.selectedRunItemId ?? '')}
+            ${hiddenInput('return_to', returnTo)}
+            <button type="submit"${detail.selectedRunItemId ? '' : ' disabled'}>Evaluate Run Item</button>
+          </form>
+        `)}
+        ${renderActionCard('Self-heal Selected Item', 'Ask AI to repair the selected failure and optionally derive a draft version.', `
+          <form method="post" action="/actions/run-items/self-heal" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('run_item_id', detail.selectedRunItemId ?? '')}
+            ${hiddenInput('return_to', returnTo)}
+            <label class="meta"><input type="checkbox" name="derive_draft_version" value="true" checked> Derive draft version on success</label>
+            <button type="submit"${detail.selectedRunItemId ? '' : ' disabled'}>Start Self-heal</button>
+          </form>
+        `)}
+        ${renderActionCard('Extract Test Case', 'Turn the selected run item into a reusable test case.', `
+          <form method="post" action="/actions/run-items/extract-test-case" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('run_item_id', detail.selectedRunItemId ?? '')}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Case Name</label>
+              <input name="name" value="console-extracted-case">
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label class="field-label">Version Label</label>
+                <input name="version_label" value="derived-v1">
+              </div>
+              <div class="field">
+                <label class="field-label">Change Summary</label>
+                <input name="change_summary" value="extracted from console">
+              </div>
+            </div>
+            <label class="meta"><input type="checkbox" name="publish" value="true"> Publish immediately</label>
+            <button type="submit"${detail.selectedRunItemId ? '' : ' disabled'}>Extract Case</button>
+          </form>
+        `)}
+      </div>
     </div>
   `;
 };
 
-const renderNewRunAction = (scope: ProjectScope, returnTo: string): string => renderActionPanel('New Run', `
-  <form method="post" action="/actions/runs/create" style="display:grid; gap:10px;">
+const renderNewRunAction = (scope: ProjectScope, returnTo: string): string => renderActionCard('New Run', 'Create a run from an inline plan or an existing case version.', `
+  <form method="post" action="/actions/runs/create" class="form-grid">
     ${hiddenInput('tenant_id', scope.tenantId)}
     ${hiddenInput('project_id', scope.projectId)}
     ${hiddenInput('return_to', returnTo)}
-    <input name="name" value="console-run">
-    <select name="selection_kind">${renderOptions('inline_web_plan', ['inline_web_plan', 'case_version'])}</select>
-    <input name="case_version_id" placeholder="Case version id for case_version runs">
-    <input name="dataset_row_id" placeholder="Optional dataset row id">
-    <textarea name="plan_json">${escapeHtml(formatJson(DEFAULT_PLAN))}</textarea>
-    <textarea name="env_profile_json">${escapeHtml(formatJson(DEFAULT_ENV_PROFILE))}</textarea>
+    <div class="field">
+      <label class="field-label">Run Name</label>
+      <input name="name" value="console-run">
+    </div>
+    <div class="form-row">
+      <div class="field">
+        <label class="field-label">Selection Kind</label>
+        <select name="selection_kind">${renderOptions('inline_web_plan', ['inline_web_plan', 'case_version'])}</select>
+      </div>
+      <div class="field">
+        <label class="field-label">Dataset Row ID</label>
+        <input name="dataset_row_id" placeholder="Optional dataset row id">
+      </div>
+    </div>
+    <div class="field">
+      <label class="field-label">Case Version ID</label>
+      <input name="case_version_id" placeholder="Required for case_version runs">
+    </div>
+    <details class="raw-details">
+      <summary>Inline plan payload</summary>
+      <div class="form-grid" style="margin-top: 12px;">
+        <div class="field">
+          <label class="field-label">Plan JSON</label>
+          <textarea name="plan_json">${escapeHtml(formatJson(DEFAULT_PLAN))}</textarea>
+        </div>
+        <div class="field">
+          <label class="field-label">Environment Profile JSON</label>
+          <textarea name="env_profile_json">${escapeHtml(formatJson(DEFAULT_ENV_PROFILE))}</textarea>
+        </div>
+      </div>
+    </details>
     <button type="submit">Create Run</button>
   </form>
-`);
+`, 'create-run');
 
 const renderAiWorkspacePage = async (ctx: RouteContext, pathname: string, url: URL): Promise<string> => {
   const systemStatus = ctx.currentScope
@@ -1464,10 +2066,10 @@ const renderAiWorkspacePage = async (ctx: RouteContext, pathname: string, url: U
     <div class="page-header">
       <div>
         <h1>AI Workspace</h1>
-        <div class="subtitle">Threads, explorations, memory facts, generated artifacts, and publish actions.</div>
+        <div class="subtitle">把协作线程和浏览探索拆开管理，先看对象，再做消息、执行和发布动作。</div>
       </div>
       <div class="header-actions">
-        ${ctx.currentScope ? renderNewAiActions(ctx.currentScope, `${pathname}?${currentParams.toString()}`) : ''}
+        ${ctx.currentScope ? `<a class="button" href="${escapeHtml(view === 'threads' ? '#create-thread' : '#create-exploration')}">${view === 'threads' ? 'New Thread' : 'New Exploration'}</a>` : ''}
       </div>
     </div>
   `;
@@ -1484,6 +2086,18 @@ const renderAiWorkspacePage = async (ctx: RouteContext, pathname: string, url: U
       pageBody: '<div class="empty">No project selected.</div>',
     });
   }
+  const workspaceTabs = renderTabs([
+    {
+      href: renderPageLink(pathname, ctx.currentScope, { workspace_view: 'threads' }),
+      label: 'Threads',
+      active: view === 'threads',
+    },
+    {
+      href: renderPageLink(pathname, ctx.currentScope, { workspace_view: 'explorations' }),
+      label: 'Explorations',
+      active: view === 'explorations',
+    },
+  ]);
   const listResult = view === 'explorations'
     ? await ctx.store.listExplorations(ctx.currentScope.tenantId, ctx.currentScope.projectId, { query: queryValue, status, page })
     : await ctx.store.listThreads(ctx.currentScope.tenantId, ctx.currentScope.projectId, { query: queryValue, page });
@@ -1497,13 +2111,18 @@ const renderAiWorkspacePage = async (ctx: RouteContext, pathname: string, url: U
     <form class="filters" method="get" action="${escapeHtml(pathname)}">
       ${hiddenInput('tenant_id', ctx.currentScope.tenantId)}
       ${hiddenInput('project_id', ctx.currentScope.projectId)}
-      <select name="workspace_view">
-        <option value="threads"${view === 'threads' ? ' selected' : ''}>Threads</option>
-        <option value="explorations"${view === 'explorations' ? ' selected' : ''}>Explorations</option>
-      </select>
-      <input type="search" name="query" value="${escapeHtml(queryValue)}" placeholder="Search title, name, or ID">
-      ${view === 'explorations' ? `<select name="status">${renderOptions(status, ['all', 'draft', 'running', 'succeeded', 'failed', 'stopped'])}</select>` : ''}
-      <button type="submit">Apply</button>
+      ${hiddenInput('workspace_view', view)}
+      <div class="filter-grid">
+        ${renderFilterField('Search', `<input type="search" name="query" value="${escapeHtml(queryValue)}" placeholder="${view === 'threads' ? 'Thread title or ID' : 'Exploration name or ID'}">`)}
+        ${view === 'explorations'
+          ? renderFilterField('Status', `<select name="status">${renderOptions(status, ['all', 'draft', 'running', 'succeeded', 'failed', 'stopped'])}</select>`)
+          : renderFilterField('Status', '<div class="meta">Threads currently support title search only.</div>')}
+        ${renderFilterField('Object Model', `<div class="meta">${view === 'threads' ? 'Messages, memory facts, linked explorations' : 'Start URL, recording, artifacts, publish output'}</div>`)}
+        <div class="filter-actions">
+          <button type="submit">Apply Filters</button>
+          <a class="button secondary" href="${escapeHtml(renderPageLink(pathname, ctx.currentScope, { workspace_view: view }))}">Reset</a>
+        </div>
+      </div>
     </form>
   `;
   const listMarkup = view === 'explorations'
@@ -1521,33 +2140,68 @@ const renderAiWorkspacePage = async (ctx: RouteContext, pathname: string, url: U
     notice: url.searchParams.get('notice'),
     error: url.searchParams.get('error'),
     pageHeader,
-    pageBody: `${filterForm}<div class="page-body"><div class="list">${listMarkup}</div><div class="detail">${detailMarkup}</div></div>`,
+    pageBody: `
+      ${workspaceTabs}
+      ${filterForm}
+      <div class="page-body">
+        <div class="list">
+          <div class="section-head">
+            <h2>${view === 'threads' ? 'Threads' : 'Explorations'}</h2>
+            <span class="meta">${listResult.items.length} items on this page</span>
+          </div>
+          ${listMarkup}
+        </div>
+        <div class="detail">
+          ${ctx.currentScope ? renderNewAiActions(ctx.currentScope, `${pathname}?${currentParams.toString()}`, view) : ''}
+          ${detailMarkup}
+        </div>
+      </div>
+    `,
   });
 };
 
-const renderNewAiActions = (scope: ProjectScope, returnTo: string): string => [
-  renderActionPanel('New Thread', `
-    <form method="post" action="/actions/threads/create" style="display:grid; gap:10px;">
+const renderNewAiActions = (scope: ProjectScope, returnTo: string, view: 'threads' | 'explorations'): string => {
+  if (view === 'threads') {
+    return renderActionCard('New Thread', 'Create a collaboration thread for assistant messages and memory facts.', `
+      <form method="post" action="/actions/threads/create" class="form-grid">
+        ${hiddenInput('tenant_id', scope.tenantId)}
+        ${hiddenInput('project_id', scope.projectId)}
+        ${hiddenInput('return_to', returnTo)}
+        <div class="field">
+          <label class="field-label">Thread Title</label>
+          <input name="title" value="console thread">
+        </div>
+        <button type="submit">Create Thread</button>
+      </form>
+    `, 'create-thread');
+  }
+  return renderActionCard('New Exploration', 'Create a browser exploration with explicit start URL and instruction.', `
+    <form method="post" action="/actions/explorations/create" class="form-grid">
       ${hiddenInput('tenant_id', scope.tenantId)}
       ${hiddenInput('project_id', scope.projectId)}
       ${hiddenInput('return_to', returnTo)}
-      <input name="title" value="console thread">
-      <button type="submit">Create Thread</button>
-    </form>
-  `),
-  renderActionPanel('New Exploration', `
-    <form method="post" action="/actions/explorations/create" style="display:grid; gap:10px;">
-      ${hiddenInput('tenant_id', scope.tenantId)}
-      ${hiddenInput('project_id', scope.projectId)}
-      ${hiddenInput('return_to', returnTo)}
-      <input name="name" value="console exploration">
-      <input name="thread_id" placeholder="Optional thread id">
-      <input name="start_url" value="https://example.com">
-      <textarea name="instruction">Explore the target flow and capture a recording.</textarea>
+      <div class="field">
+        <label class="field-label">Exploration Name</label>
+        <input name="name" value="console exploration">
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label class="field-label">Thread ID</label>
+          <input name="thread_id" placeholder="Optional thread id">
+        </div>
+        <div class="field">
+          <label class="field-label">Start URL</label>
+          <input name="start_url" value="https://example.com">
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label">Instruction</label>
+        <textarea name="instruction">Explore the target flow and capture a recording.</textarea>
+      </div>
       <button type="submit">Create Exploration</button>
     </form>
-  `),
-].join('');
+  `, 'create-exploration');
+};
 
 const renderThreadList = (pathname: string, params: URLSearchParams, listResult: PageResult<ThreadListItem>, selectedId: string | null): string => {
   const items = listResult.items.map((item) => {
@@ -1555,10 +2209,14 @@ const renderThreadList = (pathname: string, params: URLSearchParams, listResult:
     next.set('thread_id', item.id);
     return `
       <a class="list-item${item.id === selectedId ? ' selected' : ''}" href="${escapeHtml(`${pathname}?${next.toString()}`)}">
-        <strong>${escapeHtml(item.title ?? item.id)}</strong>
-        <div class="meta">${item.messageCount} messages · ${item.factCount} facts</div>
-        <div class="meta mono">${escapeHtml(item.id)}</div>
-        <div class="meta">updated ${escapeHtml(item.updatedAt)}</div>
+        <div class="list-item-head">
+          <div class="list-item-title">${escapeHtml(displayThreadTitle(item))}</div>
+        </div>
+        <div class="list-item-subtitle">${item.messageCount} messages · ${item.factCount} memory facts</div>
+        <div class="list-item-foot">
+          <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+          ${renderSecondaryId(item.id)}
+        </div>
       </a>
     `;
   }).join('');
@@ -1571,10 +2229,15 @@ const renderExplorationList = (pathname: string, params: URLSearchParams, listRe
     next.set('exploration_id', item.id);
     return `
       <a class="list-item${item.id === selectedId ? ' selected' : ''}" href="${escapeHtml(`${pathname}?${next.toString()}`)}">
-        <strong>${escapeHtml(item.name ?? item.id)}</strong>
-        <div class="inline-actions">${renderStatus(item.status)}${item.recordingId ? `<span class="badge mono">${escapeHtml(item.recordingId)}</span>` : ''}</div>
-        <div class="meta mono">${escapeHtml(item.startUrl)}</div>
-        <div class="meta">updated ${escapeHtml(item.updatedAt)}</div>
+        <div class="list-item-head">
+          <div class="list-item-title">${escapeHtml(displayExplorationName(item))}</div>
+          <div class="summary-badges">${renderStatus(item.status)}${item.recordingId ? '<span class="badge info">recording linked</span>' : ''}</div>
+        </div>
+        <div class="list-item-subtitle">${escapeHtml(formatUrlLabel(item.startUrl))}</div>
+        <div class="list-item-foot">
+          <span class="meta">Updated ${escapeHtml(formatDateTime(item.updatedAt))}</span>
+          ${renderSecondaryId(item.id)}
+        </div>
       </a>
     `;
   }).join('');
@@ -1594,48 +2257,61 @@ const renderThreadDetailCard = (
   return `
     <div class="section">
       <div class="section-head">
-        <h2>${escapeHtml(detail.title ?? detail.id)}</h2>
-        <div class="inline-actions"><span class="badge mono">${escapeHtml(detail.id)}</span></div>
+        <h2>${escapeHtml(displayThreadTitle(detail))}</h2>
+        <div class="summary-badges"><span class="badge info">thread</span></div>
       </div>
-      <div class="grid-2">
-        ${renderField('Created At', escapeHtml(detail.createdAt))}
-        ${renderField('Updated At', escapeHtml(detail.updatedAt))}
+      <div class="summary-grid three">
+        ${renderField('Messages', String(detail.messages.length))}
+        ${renderField('Memory Facts', String(detail.facts.length))}
+        ${renderField('Linked Explorations', String(detail.explorations.length))}
+        ${renderField('Created', escapeHtml(formatDateTime(detail.createdAt)))}
+        ${renderField('Updated', escapeHtml(formatDateTime(detail.updatedAt)))}
+        ${renderField('Thread ID', escapeHtml(shortId(detail.id)))}
       </div>
+      <div class="list-item-foot">${renderSecondaryId(detail.id)}</div>
     </div>
     <div class="section">
       <div class="section-head"><h3>Messages</h3></div>
-      ${detail.messages.length ? detail.messages.map((message) => `<div class="list-item"><strong>${escapeHtml(message.role)}</strong><div>${escapeHtml(message.content)}</div><div class="meta">${escapeHtml(message.createdAt)}</div></div>`).join('') : '<div class="empty">No messages yet.</div>'}
+      ${detail.messages.length ? detail.messages.map((message) => `<div class="list-item"><div class="list-item-head"><div class="list-item-title">${escapeHtml(message.role)}</div><div class="summary-badges">${renderStatus(message.role)}</div></div><div class="list-item-subtitle">${escapeHtml(message.content)}</div><div class="list-item-foot"><span class="meta">${escapeHtml(formatDateTime(message.createdAt))}</span><span class="meta mono">ID ${escapeHtml(shortId(message.id))}</span></div></div>`).join('') : '<div class="empty">No messages yet.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Memory Facts</h3></div>
-      ${detail.facts.length ? detail.facts.map((fact) => `<div class="list-item"><strong>${escapeHtml(fact.content)}</strong><div class="meta">confidence ${fact.confidence.toFixed(2)} · ${escapeHtml(fact.createdAt)}</div></div>`).join('') : '<div class="empty">No memory facts yet.</div>'}
+      ${detail.facts.length ? detail.facts.map((fact) => `<div class="list-item"><div class="list-item-title">${escapeHtml(fact.content)}</div><div class="list-item-foot"><span class="meta">confidence ${fact.confidence.toFixed(2)}</span><span class="meta">${escapeHtml(formatDateTime(fact.createdAt))}</span></div></div>`).join('') : '<div class="empty">No memory facts yet.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Linked Explorations</h3></div>
-      ${detail.explorations.length ? detail.explorations.map((exploration) => `<a class="list-item" href="/ai-workspace${buildQueryString({ ...scopeParams(scope), workspace_view: 'explorations', exploration_id: exploration.id })}"><strong>${escapeHtml(exploration.name ?? exploration.id)}</strong><div class="inline-actions">${renderStatus(exploration.status)}</div><div class="meta">${escapeHtml(exploration.updatedAt)}</div></a>`).join('') : '<div class="empty">No linked explorations yet.</div>'}
+      ${detail.explorations.length ? detail.explorations.map((exploration) => `<a class="list-item" href="${escapeHtml(renderPageLink('/ai-workspace', scope, { workspace_view: 'explorations', exploration_id: exploration.id }))}"><div class="list-item-head"><div class="list-item-title">${escapeHtml(exploration.name ?? `Exploration ${shortId(exploration.id)}`)}</div><div class="summary-badges">${renderStatus(exploration.status)}</div></div><div class="list-item-foot"><span class="meta">Updated ${escapeHtml(formatDateTime(exploration.updatedAt))}</span>${renderSecondaryId(exploration.id)}</div></a>`).join('') : '<div class="empty">No linked explorations yet.</div>'}
     </div>
     <div class="section">
       <div class="section-head"><h3>Actions</h3></div>
-      ${renderActionPanel('Send Message', `
-        <form method="post" action="/actions/threads/send" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('thread_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <textarea name="content">请总结一下当前线程已持有的事实。</textarea>
-          <button type="submit">Send</button>
-        </form>
-      `)}
-      ${renderActionPanel('Edit Title', `
-        <form method="post" action="/actions/threads/update" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('thread_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="title" value="${escapeHtml(detail.title ?? '')}">
-          <button type="submit">Save Title</button>
-        </form>
-      `)}
+      <div class="action-grid">
+        ${renderActionCard('Send Message', 'Continue this thread with a new assistant request.', `
+          <form method="post" action="/actions/threads/send" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('thread_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Message</label>
+              <textarea name="content">请总结一下当前线程已持有的事实。</textarea>
+            </div>
+            <button type="submit">Send Message</button>
+          </form>
+        `)}
+        ${renderActionCard('Edit Title', 'Rename the thread so it is easier to scan in the list.', `
+          <form method="post" action="/actions/threads/update" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('thread_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Thread Title</label>
+              <input name="title" value="${escapeHtml(detail.title ?? '')}">
+            </div>
+            <button type="submit">Save Title</button>
+          </form>
+        `)}
+      </div>
     </div>
   `;
 };
@@ -1653,16 +2329,32 @@ const renderExplorationDetailCard = (
   return `
     <div class="section">
       <div class="section-head">
-        <h2>${escapeHtml(detail.name ?? detail.id)}</h2>
-        <div class="inline-actions">${renderStatus(detail.status)}<span class="badge mono">${escapeHtml(detail.id)}</span></div>
+        <h2>${escapeHtml(displayExplorationName(detail))}</h2>
+        <div class="summary-badges">${renderStatus(detail.status)}${detail.recordingId ? '<span class="badge info">recording linked</span>' : ''}</div>
       </div>
-      <div class="grid-2">
-        ${renderField('Start URL', `<span class="mono">${escapeHtml(detail.startUrl)}</span>`)}
+      <div class="summary-grid three">
+        ${renderField('Start URL', escapeHtml(formatUrlLabel(detail.startUrl)))}
         ${renderField('Execution Mode', escapeHtml(detail.executionMode))}
-        ${renderField('Thread', escapeHtml(detail.threadId ?? '—'))}
-        ${renderField('Recording', escapeHtml(detail.recordingId ?? '—'))}
+        ${renderField('Thread', escapeHtml(detail.threadId ? shortId(detail.threadId) : '—'))}
+        ${renderField('Recording', escapeHtml(detail.recordingId ? shortId(detail.recordingId) : '—'))}
+        ${renderField('Created', escapeHtml(formatDateTime(detail.createdAt)))}
+        ${renderField('Updated', escapeHtml(formatDateTime(detail.updatedAt)))}
       </div>
-      <pre>${escapeHtml(formatJson({ instruction: detail.instruction, summary: detail.summary, lastSnapshotMarkdown: detail.lastSnapshotMarkdown, sampleDataset: detail.sampleDataset }))}</pre>
+      <div class="summary-grid">
+        ${renderField('Created Case', escapeHtml(detail.createdTestCaseId ? shortId(detail.createdTestCaseId) : '—'))}
+        ${renderField('Created Version', escapeHtml(detail.createdTestCaseVersionId ? shortId(detail.createdTestCaseVersionId) : '—'))}
+      </div>
+      <div class="stack">
+        <div class="summary-item">
+          <div class="field-label">Instruction</div>
+          <div class="summary-value">${escapeHtml(truncateText(detail.instruction, 220))}</div>
+        </div>
+        <div class="summary-item">
+          <div class="field-label">Summary</div>
+          <div class="summary-value">${escapeHtml(detail.summary ? truncateText(detail.summary, 220) : 'No summary yet')}</div>
+        </div>
+      </div>
+      <div class="list-item-foot">${renderSecondaryId(detail.id)}</div>
     </div>
     <div class="section">
       <div class="section-head"><h3>Artifacts</h3></div>
@@ -1670,50 +2362,76 @@ const renderExplorationDetailCard = (
     </div>
     <div class="section">
       <div class="section-head"><h3>Linked Data</h3></div>
-      <div class="grid-2">
-        ${renderField('Created Test Case', detail.createdTestCaseId ? `<a href="/assets${buildQueryString({ ...scopeParams(scope), asset_type: 'test-cases', asset_id: detail.createdTestCaseId })}">${escapeHtml(detail.createdTestCaseId)}</a>` : '—')}
-        ${renderField('Created Version', escapeHtml(detail.createdTestCaseVersionId ?? '—'))}
+      <div class="summary-grid">
+        ${renderField('Created Test Case', detail.createdTestCaseId ? `<a href="${escapeHtml(renderPageLink('/assets', scope, { asset_type: 'test-cases', asset_id: detail.createdTestCaseId }))}">${escapeHtml(shortId(detail.createdTestCaseId))}</a>` : '—')}
+        ${renderField('Created Version', escapeHtml(detail.createdTestCaseVersionId ? shortId(detail.createdTestCaseVersionId) : '—'))}
       </div>
+      ${renderRawJson('Raw exploration payload', {
+        instruction: detail.instruction,
+        summary: detail.summary,
+        lastSnapshotMarkdown: detail.lastSnapshotMarkdown,
+        sampleDataset: detail.sampleDataset,
+      })}
     </div>
     <div class="section">
       <div class="section-head"><h3>Actions</h3></div>
-      ${renderActionPanel('Exploration Actions', `
-        <form method="post" action="/actions/explorations/start">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('exploration_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <button type="submit">Start</button>
-        </form>
-        <form method="post" action="/actions/explorations/stop">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('exploration_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <button type="submit" class="secondary">Stop</button>
-        </form>
-        <form method="post" action="/actions/explorations/publish" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('exploration_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="${escapeHtml(detail.name ?? 'exploration-case')}">
-          <input name="version_label" value="exploration-v1">
-          <input name="change_summary" value="published from console exploration">
-          <label><input type="checkbox" name="publish" value="true" checked> Publish immediately</label>
-          <button type="submit">Publish as Test Case</button>
-        </form>
-      `)}
-      ${renderActionPanel('Edit Name', `
-        <form method="post" action="/actions/explorations/update" style="display:grid; gap:10px;">
-          ${hiddenInput('tenant_id', scope.tenantId)}
-          ${hiddenInput('project_id', scope.projectId)}
-          ${hiddenInput('exploration_id', detail.id)}
-          ${hiddenInput('return_to', returnTo)}
-          <input name="name" value="${escapeHtml(detail.name ?? '')}">
-          <button type="submit">Save Name</button>
-        </form>
-      `)}
+      <div class="action-grid">
+        ${renderActionCard('Start or Stop', 'Control the execution state of this exploration.', `
+          <div class="inline-actions">
+            <form method="post" action="/actions/explorations/start">
+              ${hiddenInput('tenant_id', scope.tenantId)}
+              ${hiddenInput('project_id', scope.projectId)}
+              ${hiddenInput('exploration_id', detail.id)}
+              ${hiddenInput('return_to', returnTo)}
+              <button type="submit">Start</button>
+            </form>
+            <form method="post" action="/actions/explorations/stop">
+              ${hiddenInput('tenant_id', scope.tenantId)}
+              ${hiddenInput('project_id', scope.projectId)}
+              ${hiddenInput('exploration_id', detail.id)}
+              ${hiddenInput('return_to', returnTo)}
+              <button type="submit" class="secondary">Stop</button>
+            </form>
+          </div>
+        `)}
+        ${renderActionCard('Edit Name', 'Rename the exploration for better scanning and comparison.', `
+          <form method="post" action="/actions/explorations/update" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('exploration_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Exploration Name</label>
+              <input name="name" value="${escapeHtml(detail.name ?? '')}">
+            </div>
+            <button type="submit">Save Name</button>
+          </form>
+        `)}
+        ${renderActionCard('Publish as Test Case', 'Create or update a test case from the latest exploration result.', `
+          <form method="post" action="/actions/explorations/publish" class="form-grid">
+            ${hiddenInput('tenant_id', scope.tenantId)}
+            ${hiddenInput('project_id', scope.projectId)}
+            ${hiddenInput('exploration_id', detail.id)}
+            ${hiddenInput('return_to', returnTo)}
+            <div class="field">
+              <label class="field-label">Case Name</label>
+              <input name="name" value="${escapeHtml(detail.name ?? 'exploration-case')}">
+            </div>
+            <div class="form-row">
+              <div class="field">
+                <label class="field-label">Version Label</label>
+                <input name="version_label" value="exploration-v1">
+              </div>
+              <div class="field">
+                <label class="field-label">Change Summary</label>
+                <input name="change_summary" value="published from console exploration">
+              </div>
+            </div>
+            <label class="meta"><input type="checkbox" name="publish" value="true" checked> Publish immediately</label>
+            <button type="submit">Publish Test Case</button>
+          </form>
+        `)}
+      </div>
     </div>
   `;
 };

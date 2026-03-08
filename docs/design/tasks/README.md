@@ -83,3 +83,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-08`: `docs/design/tasks/20260308-081533-platform-workbench-ui-ux-design-task.md` - 通用测试平台工作台 UI/UX 设计
 
 - `2026-03-08`: `docs/design/tasks/20260308-085207-apps-console-minimal-ui-design-task.md` - apps/console 最小工作台 UI 设计
+
+- `2026-03-08`: `docs/design/tasks/20260308-105440-control-plane-compose-design-task.md` - console 操作台信息架构与 compose 入口修正

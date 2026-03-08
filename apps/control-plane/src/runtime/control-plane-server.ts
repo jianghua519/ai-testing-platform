@@ -197,6 +197,23 @@ export const startControlPlaneServer = async (options: StartControlPlaneServerOp
         return;
       }
 
+      if (method === 'GET' && pathname === '/') {
+        json(response, 200, {
+          service: 'control-plane',
+          kind: 'api',
+          status: 'ok',
+          endpoints: {
+            healthz: '/healthz',
+            api_base: '/api/v1',
+          },
+          notes: [
+            'This service exposes the control-plane API.',
+            'The console UI is served separately by apps/console.',
+          ],
+        });
+        return;
+      }
+
       if (method === 'GET' && pathname === '/api/v1/internal/migrations') {
         json(response, 200, {
           items: (await store.listAppliedMigrations()).map((migration) => ({

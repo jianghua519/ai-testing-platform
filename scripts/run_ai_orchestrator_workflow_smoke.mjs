@@ -190,6 +190,7 @@ try {
 
   const health = await getJson(aiBaseUrl, '/healthz');
   assertOk(health.status === 200, 'healthz should succeed');
+  assertOk(health.body.provider === 'google', `expected google provider, got ${health.body.provider}`);
 
   const createThread = await postJson(aiBaseUrl, '/api/v1/assistant/threads', {
     title: 'ai orchestrator workflow smoke thread',
@@ -200,24 +201,37 @@ try {
   assertOk(createThread.status === 201, 'assistant thread creation failed');
   const threadId = createThread.body.thread.id;
 
-  const explorationMessage = await postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
-    content: `请探索并录屏这个流程 ${targetServer.getBaseUrl(targetHostAlias)}/home，打开资料页面，填写 Display Name=Smoke User，上传 Avatar=avatar-smoke.txt，保存后确认页面显示已保存。`,
+  const assistantCheck = await postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
+    content: '请用一句话确认你已经连接到真实 Google 模型，并且当前不需要触发 exploration、publish 或 self-heal。',
   });
-  assertOk(explorationMessage.status === 200, 'assistant exploration action failed');
-  assertOk(explorationMessage.body.action.kind === 'exploration_started', 'expected exploration_started action');
-  const explorationId = explorationMessage.body.action.payload.explorationId;
+  assertOk(assistantCheck.status === 200, 'assistant real-model check failed');
+  assertOk(
+    typeof assistantCheck.body.assistantMessage?.content === 'string'
+      && assistantCheck.body.assistantMessage.content.trim().length > 0,
+    'assistant real-model check returned empty content',
+  );
 
-  const pageQuestion = await postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
-    content: '当前页面上有什么？',
+  const createExploration = await postJson(aiBaseUrl, '/api/v1/explorations', {
+    tenantId,
+    projectId,
+    userId: subjectId,
+    threadId,
+    name: 'ai orchestrator workflow smoke exploration',
+    startUrl: `${targetServer.getBaseUrl(targetHostAlias)}/home`,
+    instruction: '打开资料页面，填写 Display Name=Smoke User，上传 Avatar=avatar-smoke.txt，保存后确认页面显示已保存。',
+    executionMode: 'scripted',
+    scriptProfile: 'profile_form',
   });
-  assertOk(pageQuestion.status === 200, 'assistant browser assist failed');
-  assertOk(pageQuestion.body.action.kind === 'browser_assist', 'expected browser_assist action');
+  assertOk(createExploration.status === 201, 'create exploration failed');
+  const explorationId = createExploration.body.exploration.id;
 
-  const stopExploration = await postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
-    content: '停止探索',
+  const startExploration = await postJson(aiBaseUrl, `/api/v1/explorations/${explorationId}:start`, {
+    subjectId,
   });
-  assertOk(stopExploration.status === 200, 'assistant stop exploration failed');
-  assertOk(stopExploration.body.action.kind === 'exploration_status', 'expected exploration_status action');
+  assertOk(startExploration.status === 200, 'start exploration failed');
+
+  const stopExploration = await postJson(aiBaseUrl, `/api/v1/explorations/${explorationId}:stop`, {});
+  assertOk(stopExploration.status === 200, 'stop exploration failed');
 
   const explorationResponse = await getJson(aiBaseUrl, `/api/v1/explorations/${explorationId}`);
   assertOk(explorationResponse.status === 200, 'get exploration failed');
@@ -226,13 +240,16 @@ try {
   assertOk(Boolean(exploration.recordingId), 'exploration recordingId missing');
   assertOk(exploration.artifacts.length >= 1, 'expected at least one exploration artifact');
 
-  const publishCase = await postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
-    content: '请根据最新录屏生成case',
+  const publishCase = await postJson(aiBaseUrl, `/api/v1/explorations/${explorationId}:publish-test-case`, {
+    subjectId,
+    name: 'workflow exploration case',
+    versionLabel: 'workflow-v1',
+    changeSummary: 'published from exploration workflow smoke',
+    publish: true,
   });
-  assertOk(publishCase.status === 200, 'assistant publish case failed');
-  assertOk(publishCase.body.action.kind === 'case_published', 'expected case_published action');
-  const testCaseId = publishCase.body.action.payload.testCaseId;
-  const originalVersionId = publishCase.body.action.payload.versionId;
+  assertOk(publishCase.status === 201, 'publish exploration case failed');
+  const testCaseId = publishCase.body.testCaseId;
+  const originalVersionId = publishCase.body.versionId;
 
   const originalVersionResponse = await getJson(
     controlPlaneBaseUrl,
@@ -309,17 +326,19 @@ try {
     `unexpected initial evaluation verdict: ${initialEvaluation.body.runEvaluation.verdict}`,
   );
 
-  const selfHealMessage = await waitForAssistantActionWithAgent(
+  const selfHealResponse = await waitForAssistantActionWithAgent(
     agent,
-    () => postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
-      content: `请自愈 run item ${brokenRunItemId}`,
+    () => postJson(aiBaseUrl, `/api/v1/run-items/${brokenRunItemId}:self-heal`, {
+      subjectId,
+      tenantId,
+      deriveDraftVersionOnSuccess: true,
     }),
-    { label: 'assistant self-heal response' },
+    { label: 'run item self-heal response' },
   );
-  assertOk(selfHealMessage.status === 200, 'assistant self-heal failed');
-  assertOk(selfHealMessage.body.action.kind === 'self_heal_started', 'expected self_heal_started action');
+  assertOk(selfHealResponse.status === 200, 'run item self-heal failed');
+  assertOk(typeof selfHealResponse.body.selfHealAttempt?.replayRunId === 'string', 'self-heal replay run id missing');
 
-  const replayRunId = selfHealMessage.body.action.payload.replayRunId;
+  const replayRunId = selfHealResponse.body.selfHealAttempt.replayRunId;
   const replayRun = await getJson(controlPlaneBaseUrl, `/api/v1/runs/${replayRunId}`, authHeaders);
   assertOk(replayRun.status === 200, 'get replay run failed');
   assertOk(replayRun.body.status === 'succeeded', `expected replay run succeeded, got ${replayRun.body.status}`);
@@ -328,18 +347,18 @@ try {
   assertOk(replayRunItems.status === 200, 'list replay run items failed');
   const replayRunItemId = replayRunItems.body.items[0].id;
 
-  const evaluationMessage = await postJson(aiBaseUrl, `/api/v1/assistant/threads/${threadId}/messages`, {
-    content: `请评估 run item ${replayRunItemId}`,
+  const evaluationResponse = await postJson(aiBaseUrl, `/api/v1/run-items/${replayRunItemId}:evaluate`, {
+    subjectId,
+    tenantId,
   });
-  assertOk(evaluationMessage.status === 200, 'assistant evaluation failed');
-  assertOk(evaluationMessage.body.action.kind === 'run_evaluated', 'expected run_evaluated action');
-  const evaluationId = evaluationMessage.body.action.payload.runEvaluationId;
+  assertOk(evaluationResponse.status === 201, 'run item evaluation failed');
+  const evaluationId = evaluationResponse.body.runEvaluation.id;
 
-  const evaluationResponse = await getJson(aiBaseUrl, `/api/v1/run-evaluations/${evaluationId}`);
-  assertOk(evaluationResponse.status === 200, 'get run evaluation failed');
+  const evaluationDetail = await getJson(aiBaseUrl, `/api/v1/run-evaluations/${evaluationId}`);
+  assertOk(evaluationDetail.status === 200, 'get run evaluation failed');
   assertOk(
-    evaluationResponse.body.runEvaluation.verdict === 'passed_with_runtime_self_heal',
-    `unexpected replay evaluation verdict: ${evaluationResponse.body.runEvaluation.verdict}`,
+    evaluationDetail.body.runEvaluation.verdict === 'passed_with_runtime_self_heal',
+    `unexpected replay evaluation verdict: ${evaluationDetail.body.runEvaluation.verdict}`,
   );
 
   assertOk(targetServer.submissions.length >= 2, `expected at least 2 successful submissions, got ${targetServer.submissions.length}`);
@@ -351,7 +370,9 @@ try {
   console.log(JSON.stringify({
     status: 'ok',
     provider: health.body.provider,
+    model: health.body.model,
     threadId,
+    assistantCheckPreview: assistantCheck.body.assistantMessage.content,
     explorationId,
     recordingId: exploration.recordingId,
     explorationArtifactCount: exploration.artifacts.length,
@@ -363,7 +384,7 @@ try {
     replayRunId,
     replayRunItemId,
     evaluationId,
-    evaluationVerdict: evaluationResponse.body.runEvaluation.verdict,
+    evaluationVerdict: evaluationDetail.body.runEvaluation.verdict,
     submissionCount: targetServer.submissions.length,
   }, null, 2));
 } finally {

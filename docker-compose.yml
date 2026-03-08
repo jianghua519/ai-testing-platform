@@ -130,6 +130,7 @@ services:
       CONSOLE_BIND_HOST: 0.0.0.0
       CONSOLE_DATABASE_URL: postgresql://aiwtp:aiwtp-password@postgres:5432/aiwtp
       CONTROL_PLANE_BASE_URL: http://control-plane:8080
+      # External control-plane API base for artifact/download links. Console UI itself is on :18082.
       CONTROL_PLANE_PUBLIC_BASE_URL: http://127.0.0.1:18080
       CONTROL_PLANE_JWT_SECRET: local-control-plane-dev-secret
       AI_ORCHESTRATOR_BASE_URL: http://ai-orchestrator:${AI_ORCHESTRATOR_PORT:-8081}
