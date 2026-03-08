@@ -6,11 +6,12 @@
     "apps/*"
   ],
   "scripts": {
-    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter apps/web-worker apps/control-plane apps/ai-orchestrator",
+    "typecheck": "tsc -b packages/web-dsl-schema packages/dsl-compiler packages/playwright-adapter apps/web-worker apps/control-plane apps/ai-orchestrator apps/console",
     "build": "npm run typecheck",
     "compose:postgres:reset": "node ./scripts/reset_compose_postgres.mjs",
     "ai-orchestrator:serve": "node ./scripts/start_ai_orchestrator_server.mjs",
     "ai-orchestrator:migrate:postgres": "node ./scripts/migrate_ai_orchestrator_postgres.mjs",
+    "console:serve": "node ./scripts/start_console_server.mjs",
     "control-plane:serve": "node ./scripts/start_control_plane_server.mjs",
     "control-plane:artifacts:prune": "npm run build && node ./scripts/prune_expired_artifacts.mjs",
     "control-plane:migrate:postgres": "npm run build && node ./scripts/migrate_control_plane_postgres.mjs",
@@ -20,6 +21,7 @@
     "smoke:ai-orchestrator:mock": "node ./scripts/run_ai_orchestrator_mock_smoke.mjs",
     "smoke:ai-orchestrator:postgres:persistence": "node ./scripts/run_ai_orchestrator_postgres_persistence_smoke.mjs",
     "smoke:ai-orchestrator:workflow": "node ./scripts/run_ai_orchestrator_workflow_smoke.mjs",
+    "smoke:console:compose": "node ./scripts/run_console_compose_smoke.mjs",
     "worker:agent": "node ./scripts/start_polling_web_agent.mjs",
     "smoke:scheduler:compose": "node ./scripts/run_scheduler_compose_smoke.mjs",
     "smoke:web:real": "npm run build && node ./scripts/run_real_browser_smoke.mjs",

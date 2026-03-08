@@ -4,6 +4,7 @@
 
 当前代码骨架：
 
+- `apps/console`：最小工作台 UI，直接展示 PostgreSQL / MinIO 中已经持有的资产、运行和 AI 工作空间数据，并透传现有 API 动作
 - `apps/web-worker`：Web 执行 worker，负责编译 DSL、执行 step、回传结果，并提供轮询式 agent 主循环
 - `apps/control-plane`：最小控制面 API，负责接收 runner 结果、step 决策、任务入队、agent 注册/心跳/租约获取与释放，并支持 `required_capabilities` 能力匹配
 - `packages/web-dsl-schema`：源 DSL、编译后模型、执行结果类型
@@ -41,6 +42,7 @@
 - `npm run compose:postgres:reset`
 - `npm run ai-orchestrator:serve`
 - `npm run ai-orchestrator:migrate:postgres`
+- `npm run console:serve`
 - `npm run control-plane:serve`
 - `npm run control-plane:artifacts:prune`
 - `npm run control-plane:migrate:postgres`
@@ -49,6 +51,7 @@
 - `npm run smoke:ai-orchestrator:mock`：验证 assistant thread / memory / chat API 与 LangGraph 最小编排闭环
 - `npm run smoke:ai-orchestrator:postgres:persistence`：验证 assistant thread / memory / chat API 已落到 PostgreSQL，并可在服务重启后继续读取
 - `npm run smoke:ai-orchestrator:workflow`：验证 Playwright MCP 探索录屏、录屏转 case、自愈执行、run evaluation 和动作型 chatbot 闭环
+- `npm run smoke:console:compose`：在容器化本地栈中验证 console 的一览、筛选、详情和最小编辑动作
 - `npm run smoke:web:real`：真实 Chromium 覆盖 `open`、`click`、`input`、`upload`、`assert`
 - `npm run smoke:control-plane:postgres`：control-plane PostgreSQL 存储链路快路径 smoke（`pg-mem`）
 - `npm run smoke:control-plane:postgres:real`：真实外部 PostgreSQL 实例 smoke（嵌入式 PostgreSQL 进程），覆盖 migration、query API 和恢复验证
@@ -98,6 +101,16 @@ AI Orchestrator：
   - `POST /api/v1/run-items/{run_item_id}:evaluate`
   - `GET /api/v1/run-evaluations/{run_evaluation_id}`
 
+Console：
+
+- `apps/console` 当前采用最小 SSR/BFF 形态，不引入新的前端框架，只使用现有 PostgreSQL 持久化对象和 `control-plane` / `ai-orchestrator` 已有动作接口
+- 当前入口：
+  - `/overview`
+  - `/assets`
+  - `/runs`
+  - `/ai-workspace`
+- 当前不做拍脑袋模块，页面只展示已经落库的 `test_cases / recordings / runs / assistant_threads / exploration_sessions / artifacts` 等对象及其关联明细
+
 当前控制面查询接口：
 
 - `GET /api/v1/runs?tenant_id=...&project_id=...&limit=...&cursor=...`
@@ -142,11 +155,13 @@ artifact 存储约定：
 容器化本地栈：
 
 - `docker compose build tools control-plane ai-orchestrator`
+- `docker compose build tools control-plane ai-orchestrator console`
 - `npm run compose:postgres:reset`
-- `AI_PROVIDER=mock docker compose up -d control-plane ai-orchestrator --wait`
+- `AI_PROVIDER=mock docker compose up -d control-plane ai-orchestrator console --wait`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:mock`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:postgres:persistence`
 - `docker compose exec -T tools npm run smoke:ai-orchestrator:workflow`
+- `docker compose exec -T tools npm run smoke:console:compose`
 - `docker compose run --rm tools npm run smoke:control-plane:compose`
 - `docker compose run --rm tools npm run smoke:scheduler:compose`
 - `docker compose run --rm tools npm run control-plane:artifacts:prune`
@@ -155,6 +170,7 @@ artifact 存储约定：
 镜像说明：
 
 - `control-plane` 使用 `Dockerfile` 的 `app-runtime` 目标，保持较小的 Node 运行时镜像
+- `console` 也使用 `Dockerfile` 的 `app-runtime` 目标，通过服务端渲染直接复用工作区构建产物
 - `ai-orchestrator` 使用 `Dockerfile` 的 `playwright-app-runtime` 目标，内置 Playwright 浏览器依赖，供 MCP 探索和 browser assist 复用
 - `tools` 使用 `Dockerfile` 的 `playwright-runtime` 目标，直接基于官方 `mcr.microsoft.com/playwright:v1.58.2-noble`
 - `npm ci` 使用 BuildKit cache mount，避免每次重新下载整包依赖

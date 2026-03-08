@@ -116,6 +116,39 @@ services:
       timeout: 3s
       retries: 30
 
+  console:
+    build:
+      context: .
+      target: app-runtime
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      ai-orchestrator:
+        condition: service_healthy
+    environment:
+      PORT: 8082
+      CONSOLE_BIND_HOST: 0.0.0.0
+      CONSOLE_DATABASE_URL: postgresql://aiwtp:aiwtp-password@postgres:5432/aiwtp
+      CONTROL_PLANE_BASE_URL: http://control-plane:8080
+      CONTROL_PLANE_PUBLIC_BASE_URL: http://127.0.0.1:18080
+      CONTROL_PLANE_JWT_SECRET: local-control-plane-dev-secret
+      AI_ORCHESTRATOR_BASE_URL: http://ai-orchestrator:${AI_ORCHESTRATOR_PORT:-8081}
+      CONSOLE_DEFAULT_SUBJECT_ID: console-user
+    ports:
+      - "18082:8082"
+    command: ["node", "./scripts/start_console_server.mjs"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8082/healthz').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
   tools:
     build:
       context: .
@@ -131,6 +164,7 @@ services:
       CONTROL_PLANE_BASE_URL: http://control-plane:8080
       CONTROL_PLANE_JWT_SECRET: local-control-plane-dev-secret
       AI_ORCHESTRATOR_BASE_URL: http://ai-orchestrator:${AI_ORCHESTRATOR_PORT:-8081}
+      CONSOLE_BASE_URL: http://console:8082
       AI_ORCHESTRATOR_STORE_MODE: ${AI_ORCHESTRATOR_STORE_MODE:-postgres}
       AI_ORCHESTRATOR_DATABASE_URL: ${AI_ORCHESTRATOR_DATABASE_URL:-postgresql://aiwtp:aiwtp-password@postgres:5432/aiwtp}
       AI_ORCHESTRATOR_RUN_MIGRATIONS: ${AI_ORCHESTRATOR_RUN_MIGRATIONS:-true}

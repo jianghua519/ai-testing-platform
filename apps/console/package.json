@@ -1,0 +1,15 @@
+{
+  "name": "@aiwtp/console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@aiwtp/control-plane": "0.1.0",
+    "pg": "^8.16.3"
+  }
+}

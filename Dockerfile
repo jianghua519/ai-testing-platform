@@ -15,6 +15,7 @@ COPY packages/playwright-adapter/package.json ./packages/playwright-adapter/pack
 COPY apps/web-worker/package.json ./apps/web-worker/package.json
 COPY apps/control-plane/package.json ./apps/control-plane/package.json
 COPY apps/ai-orchestrator/package.json ./apps/ai-orchestrator/package.json
+COPY apps/console/package.json ./apps/console/package.json
 
 RUN --mount=type=cache,target=/root/.npm npm ci
 

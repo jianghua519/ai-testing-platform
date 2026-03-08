@@ -2,7 +2,7 @@
 title: 项目任务说明索引
 status: active
 owner: pm
-last_updated: 2026-03-07
+last_updated: 2026-03-08
 summary: 任务级项目说明文档的存放位置和索引规则。
 ---
 
@@ -77,3 +77,5 @@ summary: 任务级项目说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/project/tasks/20260307-211047-test-asset-domain-model-project-task.md` - 测试资产领域模型与版本化执行
 
 - `2026-03-07`: `docs/project/tasks/20260307-221500-recording-capability-gap-project-task.md` - 录屏到报告能力调研与 GAP 分析
+
+- `2026-03-08`: `docs/project/tasks/20260308-103000-apps-console-minimal-ui-project-task.md` - apps console 最小工作台 UI 开发任务说明

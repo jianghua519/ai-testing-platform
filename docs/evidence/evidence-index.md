@@ -85,3 +85,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-08`: `docs/evidence/records/20260308-081829-platform-workbench-ui-ux-design-evidence.md` - 通用测试平台工作台 UI/UX 设计交付与现有 AI workflow 基线验证 的测试举证记录。
 
 - `2026-03-08`: `docs/evidence/records/20260308-085207-apps-console-minimal-ui-design-evidence.md` - apps/console 最小工作台 UI 设计交付与现有 AI workflow 基线验证 的测试举证记录。
+
+- `2026-03-08`: `docs/evidence/records/20260308-103000-apps-console-minimal-ui-evidence.md` - apps/console 最小工作台 UI 开发接入、真实 workflow 造数与 UI smoke 的测试举证记录。
