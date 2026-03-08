@@ -81,3 +81,5 @@ summary: 任务级设计说明文档的存放位置和索引规则。
 - `2026-03-07`: `docs/design/tasks/20260307-235950-langgraph-ai-orchestrator-design-task.md` - LangGraph 驱动的 AI 测试编排与对话助手设计
 
 - `2026-03-08`: `docs/design/tasks/20260308-081533-platform-workbench-ui-ux-design-task.md` - 通用测试平台工作台 UI/UX 设计
+
+- `2026-03-08`: `docs/design/tasks/20260308-085207-apps-console-minimal-ui-design-task.md` - apps/console 最小工作台 UI 设计

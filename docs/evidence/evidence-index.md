@@ -83,3 +83,5 @@ summary: 仓库验证执行产生的测试举证记录索引。
 - `2026-03-08`: `docs/evidence/records/20260308-030435-ai-orchestrator-workflow-self-heal-evidence.md` - Playwright MCP 探索录屏、录屏转 case、自愈执行、run evaluation 与动作型 chatbot 闭环 的测试举证记录。
 
 - `2026-03-08`: `docs/evidence/records/20260308-081829-platform-workbench-ui-ux-design-evidence.md` - 通用测试平台工作台 UI/UX 设计交付与现有 AI workflow 基线验证 的测试举证记录。
+
+- `2026-03-08`: `docs/evidence/records/20260308-085207-apps-console-minimal-ui-design-evidence.md` - apps/console 最小工作台 UI 设计交付与现有 AI workflow 基线验证 的测试举证记录。
